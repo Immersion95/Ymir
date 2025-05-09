@@ -83,6 +83,13 @@ public:
         m_fnObservers.emplace_back(std::move(observer));
     }
 
+    /// @brief Adds an observer to this observable and immediately invokes the function with the current value.
+    /// @param[in] observer the observer to add
+    void ObserveAndNotify(std::function<Observer> &&observer) {
+        observer(m_value);
+        m_fnObservers.emplace_back(std::move(observer));
+    }
+
     /// @brief Adds a simple observer to this observable that copies the value to the given reference.
     ///
     /// Also copies the current value to the given reference.

@@ -1108,7 +1108,7 @@ void VDP::UpdateResolution() {
     //   LDt = Last Dot
     //   ADp = Active Display
     // NOTE: these timings specify the HCNT to advance to the specified phase
-    static constexpr std::array<std::array<uint32, 6>, 8> hTimings{{
+    static constexpr std::array<std::array<uint32, 6>, 4> hTimings{{
         // RBd, HSy, VBC, LBd, LDt, ADp
         {320, 27, 27, 26, 26, 1}, // {320, 347, 374, 400, 426, 427},
         {352, 23, 28, 29, 22, 1}, // {352, 375, 403, 432, 454, 455},

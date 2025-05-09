@@ -8,6 +8,12 @@
 
 namespace ymir::sys {
 
+static constexpr double kNTSCClock = 39375000.0 * 8.0 / 11.0;
+static constexpr double kPALClock = 28437500.0;
+
+static constexpr uint64 kNTSCClocksPerFrame = 455 * 263 * 4;
+static constexpr uint64 kPALClocksPerFrame = 455 * 313 * 4;
+
 enum class ClockSpeed { _320, _352 };
 
 // Clock speeds:

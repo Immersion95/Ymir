@@ -58,6 +58,18 @@ public:
         return m_silent;
     }
 
+    uint32 GetBufferCount() const {
+        uint32 total = m_writePos - m_readPos + m_buffer.size();
+        if (total > m_buffer.size()) {
+            total -= m_buffer.size();
+        }
+        return total;
+    }
+
+    uint32 GetBufferCapacity() const {
+        return m_buffer.size();
+    }
+
 private:
     struct Sample {
         sint16 left, right;

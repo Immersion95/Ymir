@@ -10,6 +10,7 @@
 - App: Allow customizing all profile paths. (#74)
 - App: Add IPL ROM list sorting. (#92) (@Wunkolo)
 - App: Add full screen mode (default shortcut: `Alt+Enter`) and command-line override `-f`. (#47)
+- App: Improve frame pacing for a smooth full screen experience. (#97)
 
 ### Fixes
 

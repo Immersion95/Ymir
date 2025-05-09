@@ -21,13 +21,29 @@ option(Ymir_ENABLE_DEVLOG "Enable development logs" ON)
 option(Ymir_ENABLE_IMGUI_DEMO "Enable ImGui demo window" ON)
 message(STATUS "Ymir: Devlog ${Ymir_ENABLE_DEVLOG}")
 
-## Performance options
-option(Ymir_AVX2 "Enable AVX2 instruction set for Ymir" OFF)
-if (Ymir_AVX2)
-    message(STATUS "Ymir: Using AVX2 instruction set")
-else ()
-    message(STATUS "Ymir: Using SSE2 instruction set")
+# Detect target architectures
+# ARCHITECTURES may have multiple variables in the case of a multi-arch build
+# such as a universal binary on MacOS
+include(cmake/DetectArchitecture.cmake)
+if (NOT DEFINED ARCHITECTURES)
+    message(FATAL_ERROR "Unsupported architecture")
 endif ()
+message(STATUS "Ymir: Architecture(s) ${ARCHITECTURES}")
+
+## Performance options
+if ("x86_64" IN_LIST ARCHITECTURES)
+	option(Ymir_AVX2 "Enable AVX2 instruction set for Ymir" OFF)
+	if (Ymir_AVX2)
+		message(STATUS "Ymir: Using AVX2 instruction set")
+	else ()
+		message(STATUS "Ymir: Using SSE2 instruction set")
+	endif ()
+endif ()
+
+if ("arm64" IN_LIST ARCHITECTURES)
+	message(STATUS "Ymir: Using NEON instruction set")
+endif ()
+
 
 ## C++ language configuration boilerplate
 if (NOT DEFINED CMAKE_CXX_VISIBILITY_PRESET AND

@@ -380,6 +380,20 @@ void AboutWindow::DrawAcknowledgementsTab() {
         ImGui::TextLinkOpenURL("Discord server", "https://discord.gg/dkmJAes");
         ImGui::SameLine(0, 0);
         ImGui::TextUnformatted(".");
+
+        ImGui::TextUnformatted("To the ");
+        ImGui::SameLine(0, 0);
+        ImGui::TextLinkOpenURL("project contributors", "https://github.com/StrikerX3/Ymir/graphs/contributors");
+        ImGui::SameLine(0, 0);
+        ImGui::TextUnformatted(" and users ");
+        ImGui::SameLine(0, 0);
+        ImGui::TextLinkOpenURL("reporting issues and feature requests", "https://github.com/StrikerX3/Ymir/issues");
+        ImGui::SameLine(0, 0);
+        ImGui::TextUnformatted(".");
+
+        ImGui::PushFont(m_context.fonts.sansSerif.large.bold);
+        ImGui::TextUnformatted("And YOU!");
+        ImGui::PopFont();
     }
 }
 

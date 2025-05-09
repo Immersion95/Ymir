@@ -443,15 +443,39 @@ void App::RunEmulator() {
             this->resolutionChanged = true;
         }
 
-        std::vector<uint32> framebuffer;
+        std::vector<uint32> framebuffer; // staging buffer
         std::mutex mtxFramebuffer;
         bool updated = false;
-        bool reduceLatency = false;         // false = more performance; true = update frames more often
-        util::Event frameReadyEvent{false}; // used to sync fullscreen updates for VRR displays
+        bool reduceLatency = false; // false = more performance; true = update frames more often
+
+        // Video sync
+        bool videoSync = false;
+        util::Event frameReadyEvent{false};         // emulator has written a new frame to the staging buffer
+        util::Event frameRequestEvent{false};       // GUI ready for the next frame
+        clk::time_point nextFrameTarget{};          // target time for next frame
+        clk::duration frameInterval{};              // interval between frames
+        clk::duration frameIntervalTolerance = 5ms; // maximum frame lateness tolerance
 
         uint64 frames = 0;
         uint64 vdp1Frames = 0;
     } screen;
+
+    static constexpr double kNTSCFrameInterval = sys::kNTSCClocksPerFrame / sys::kNTSCClock;
+    static constexpr double kPALFrameInterval = sys::kPALClocksPerFrame / sys::kPALClock;
+
+    static constexpr double kNTSCFrameRate = 1.0 / kNTSCFrameInterval;
+    static constexpr double kPALFrameRate = 1.0 / kPALFrameInterval;
+
+    m_context.saturn.configuration.system.videoStandard.ObserveAndNotify(
+        [&](core::config::sys::VideoStandard standard) {
+            if (standard == core::config::sys::VideoStandard::PAL) {
+                screen.frameInterval =
+                    std::chrono::duration_cast<clk::duration>(std::chrono::duration<double>(kPALFrameInterval));
+            } else {
+                screen.frameInterval =
+                    std::chrono::duration_cast<clk::duration>(std::chrono::duration<double>(kNTSCFrameInterval));
+            }
+        });
 
     // ---------------------------------
     // Initialize SDL subsystems
@@ -885,6 +909,9 @@ void App::RunEmulator() {
 
                                                 // TODO: figure out frame pacing when sync to video is enabled
                                                 if (screen.reduceLatency || !screen.updated) {
+                                                    if (screen.videoSync) {
+                                                        screen.frameRequestEvent.Wait(true);
+                                                    }
                                                     std::unique_lock lock{screen.mtxFramebuffer};
                                                     std::copy_n(fb, width * height, screen.framebuffer.data());
                                                     screen.updated = true;
@@ -903,7 +930,7 @@ void App::RunEmulator() {
     static constexpr int kSampleRate = 44100;
     static constexpr SDL_AudioFormat kSampleFormat = SDL_AUDIO_S16;
     static constexpr int kChannels = 2;
-    static constexpr uint32 kBufferSize = 44100 / 60 / 2; // TODO: make this configurable
+    static constexpr uint32 kBufferSize = 512; // TODO: make this configurable
 
     if (!m_audioSystem.Init(kSampleRate, kSampleFormat, kChannels, kBufferSize)) {
         devlog::error<grp::base>("Unable to create audio stream: {}", SDL_GetError());
@@ -1504,7 +1531,6 @@ void App::RunEmulator() {
         }
 
         // Update display
-        // TODO: figure out frame pacing when sync to video is enabled
         if (screen.updated) {
             screen.updated = false;
             std::unique_lock lock{screen.mtxFramebuffer};
@@ -1519,11 +1545,12 @@ void App::RunEmulator() {
                 // std::copy_n(framebuffer.begin(), screen.width * screen.height, pixels);
                 SDL_UnlockTexture(fbTexture);
             }
+            screen.frameRequestEvent.Set();
         }
 
         // Calculate performance and update title bar
-        auto t2 = clk::now();
-        if (t2 - t >= 1s) {
+        auto now = clk::now();
+        if (now - t >= 1s) {
             const media::Disc &disc = m_context.saturn.CDBlock.GetDisc();
             const media::SaturnHeader &header = disc.header;
             std::string productNumber = "";
@@ -1554,7 +1581,7 @@ void App::RunEmulator() {
             SDL_SetWindowTitle(screen.window, title.c_str());
             screen.frames = 0;
             screen.vdp1Frames = 0;
-            t = t2;
+            t = now;
         }
 
         const bool prevForceAspectRatio = m_context.settings.video.forceAspectRatio;
@@ -1572,10 +1599,28 @@ void App::RunEmulator() {
             ImGui::SetMouseCursor(ImGuiMouseCursor_None);
         }
 
-        // Wait for frame update from emulator core if in full screen mode and not paused
+        // Wait for frame update from emulator core if in full screen mode and not paused or fast-forwarding
         const bool fullScreen = m_context.settings.video.fullScreen;
-        if (fullScreen && !paused) {
+        if (fullScreen && !paused && m_audioSystem.IsSync()) {
             screen.frameReadyEvent.Wait(true);
+
+            // Check if audio buffer is running low; deliver frame early if so
+            const uint32 audioBufferSize = m_audioSystem.GetBufferCount();
+            const uint32 audioBufferCap = m_audioSystem.GetBufferCapacity();
+            const bool deliverNow = audioBufferSize < audioBufferCap / 4;
+
+            // Sleep until a bit before the next frame delivery
+            if (!deliverNow && now < screen.nextFrameTarget) {
+                std::this_thread::sleep_until(screen.nextFrameTarget - 2ms);
+            }
+
+            // If the frame was too late, set next frame target time relative to now, otherwise increment by the
+            // interval
+            if (now > screen.nextFrameTarget + screen.frameIntervalTolerance) {
+                screen.nextFrameTarget = now + screen.frameInterval;
+            } else {
+                screen.nextFrameTarget += screen.frameInterval;
+            }
         }
 
         // ---------------------------------------------------------------------
@@ -1947,6 +1992,12 @@ void App::RunEmulator() {
                 ImGui::ShowDemoWindow(&showImGuiDemoWindow);
             }
 #endif
+
+            /*if (ImGui::Begin("Audio buffer")) {
+                ImGui::SetNextItemWidth(-1);
+                ImGui::ProgressBar((float)m_audioSystem.GetBufferCount() / m_audioSystem.GetBufferCapacity());
+            }
+            ImGui::End();*/
 
             auto &videoSettings = m_context.settings.video;
 
