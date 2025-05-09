@@ -2,8 +2,7 @@ name: Release
 
 on:
   push:
-    tags: [ "v*" ]
-
+  
 jobs:
   build-windows:
     name: windows-${{ matrix.c_compiler }}-${{ matrix.x86_simd_ext.name }}-${{ matrix.subsystem.name }}
