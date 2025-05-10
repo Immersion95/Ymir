@@ -450,24 +450,23 @@ void App::RunEmulator() {
 
         // Video sync
         bool videoSync = false;
-        util::Event frameReadyEvent{false};         // emulator has written a new frame to the staging buffer
-        util::Event frameRequestEvent{false};       // GUI ready for the next frame
-        clk::time_point nextFrameTarget{};          // target time for next frame
-        clk::duration frameInterval{};              // interval between frames
-        clk::duration frameIntervalTolerance = 5ms; // maximum frame lateness tolerance
+        util::Event frameReadyEvent{false};   // emulator has written a new frame to the staging buffer
+        util::Event frameRequestEvent{false}; // GUI ready for the next frame
+        clk::time_point nextFrameTarget{};    // target time for next frame
+        clk::duration frameInterval{};        // interval between frames
 
         uint64 frames = 0;
         uint64 vdp1Frames = 0;
     } screen;
 
-    static constexpr double kNTSCFrameInterval = sys::kNTSCClocksPerFrame / sys::kNTSCClock;
-    static constexpr double kPALFrameInterval = sys::kPALClocksPerFrame / sys::kPALClock;
-
-    static constexpr double kNTSCFrameRate = 1.0 / kNTSCFrameInterval;
-    static constexpr double kPALFrameRate = 1.0 / kPALFrameInterval;
-
     m_context.saturn.configuration.system.videoStandard.ObserveAndNotify(
         [&](core::config::sys::VideoStandard standard) {
+            static constexpr double kNTSCFrameInterval = sys::kNTSCClocksPerFrame / sys::kNTSCClock;
+            static constexpr double kPALFrameInterval = sys::kPALClocksPerFrame / sys::kPALClock;
+
+            static constexpr double kNTSCFrameRate = 1.0 / kNTSCFrameInterval;
+            static constexpr double kPALFrameRate = 1.0 / kPALFrameInterval;
+
             if (standard == core::config::sys::VideoStandard::PAL) {
                 screen.frameInterval =
                     std::chrono::duration_cast<clk::duration>(std::chrono::duration<double>(kPALFrameInterval));
@@ -484,7 +483,7 @@ void App::RunEmulator() {
         devlog::error<grp::base>("Unable to initialize SDL: {}", SDL_GetError());
         return;
     }
-    util::ScopeGuard sgQuit{[&] { SDL_Quit(); }};
+    ScopeGuard sgQuit{[&] { SDL_Quit(); }};
 
     // ---------------------------------
     // Setup Dear ImGui context
@@ -907,11 +906,10 @@ void App::RunEmulator() {
                                                 }
                                                 ++screen.frames;
 
-                                                // TODO: figure out frame pacing when sync to video is enabled
-                                                if (screen.reduceLatency || !screen.updated) {
-                                                    if (screen.videoSync) {
-                                                        screen.frameRequestEvent.Wait(true);
-                                                    }
+                                                if (screen.videoSync) {
+                                                    screen.frameRequestEvent.Wait(true);
+                                                }
+                                                if (screen.reduceLatency || !screen.updated || screen.videoSync) {
                                                     std::unique_lock lock{screen.mtxFramebuffer};
                                                     std::copy_n(fb, width * height, screen.framebuffer.data());
                                                     screen.updated = true;
@@ -1294,10 +1292,11 @@ void App::RunEmulator() {
     m_emuThread = std::thread([&] { EmulatorThread(); });
     ScopeGuard sgStopEmuThread{[&] {
         // TODO: fix this hacky mess
-        // HACK: unpause and unsilence audio system in order to unlock the emulator thread if it is waiting for free
-        // space in the audio buffer due to being paused
+        // HACK: unpause, unsilence audio system and set frame request signal in order to unlock the emulator thread if
+        // it is waiting for free space in the audio buffer due to being paused
         paused = false;
         m_audioSystem.SetSilent(false);
+        screen.frameRequestEvent.Set();
         m_context.EnqueueEvent(events::emu::SetPaused(false));
         m_context.EnqueueEvent(events::emu::Shutdown());
         if (m_emuThread.joinable()) {
@@ -1531,7 +1530,10 @@ void App::RunEmulator() {
         }
 
         // Update display
-        if (screen.updated) {
+        if (screen.updated || screen.videoSync) {
+            if (screen.videoSync) {
+                screen.frameReadyEvent.Wait(true);
+            }
             screen.updated = false;
             std::unique_lock lock{screen.mtxFramebuffer};
             uint32 *pixels = nullptr;
@@ -1601,24 +1603,32 @@ void App::RunEmulator() {
 
         // Wait for frame update from emulator core if in full screen mode and not paused or fast-forwarding
         const bool fullScreen = m_context.settings.video.fullScreen;
+        screen.videoSync = fullScreen && !paused && m_audioSystem.IsSync();
         if (fullScreen && !paused && m_audioSystem.IsSync()) {
-            screen.frameReadyEvent.Wait(true);
-
-            // Check if audio buffer is running low; deliver frame early if so
+            // Deliver frame early if audio buffer is emptying (video sync is slowing down emulation too much).
+            // Attempt to maintain the audio buffer above 60%; present frames up to 30% sooner if it drops.
             const uint32 audioBufferSize = m_audioSystem.GetBufferCount();
             const uint32 audioBufferCap = m_audioSystem.GetBufferCapacity();
-            const bool deliverNow = audioBufferSize < audioBufferCap / 4;
-
-            // Sleep until a bit before the next frame delivery
-            if (!deliverNow && now < screen.nextFrameTarget) {
-                std::this_thread::sleep_until(screen.nextFrameTarget - 2ms);
+            const double audioBufferLevel = 0.6;
+            const double audioBufferPct = (double)audioBufferSize / audioBufferCap;
+            if (audioBufferPct < audioBufferLevel) {
+                const double adjustPct = std::clamp((audioBufferLevel - audioBufferPct) / audioBufferLevel, 0.0, 1.0);
+                screen.nextFrameTarget -=
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(screen.frameInterval * adjustPct * 0.3);
             }
 
-            // If the frame was too late, set next frame target time relative to now, otherwise increment by the
-            // interval
-            if (now > screen.nextFrameTarget + screen.frameIntervalTolerance) {
-                screen.nextFrameTarget = now + screen.frameInterval;
+            // Sleep until the next frame presentation time
+            if (now < screen.nextFrameTarget) {
+                std::this_thread::sleep_until(screen.nextFrameTarget);
+            }
+
+            // Update next frame target
+            auto now2 = clk::now();
+            if (now2 > screen.nextFrameTarget) {
+                // The frame was presented late; set next frame target time relative to now
+                screen.nextFrameTarget = now2 + screen.frameInterval;
             } else {
+                // The frame was presented on time; increment by the interval
                 screen.nextFrameTarget += screen.frameInterval;
             }
         }
