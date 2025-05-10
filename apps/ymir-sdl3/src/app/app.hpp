@@ -69,6 +69,8 @@ private:
 
     std::chrono::steady_clock::time_point m_mouseHideTime;
 
+    util::Event m_emuProcessEvent{true};
+
     void RunEmulator();
 
     void EmulatorThread();

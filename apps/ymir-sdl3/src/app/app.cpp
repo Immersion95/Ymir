@@ -1295,6 +1295,7 @@ void App::RunEmulator() {
         // HACK: unpause, unsilence audio system and set frame request signal in order to unlock the emulator thread if
         // it is waiting for free space in the audio buffer due to being paused
         paused = false;
+        m_emuProcessEvent.Set();
         m_audioSystem.SetSilent(false);
         screen.frameRequestEvent.Set();
         m_context.EnqueueEvent(events::emu::SetPaused(false));
@@ -1448,6 +1449,9 @@ void App::RunEmulator() {
         // Process all axis changes
         m_context.inputContext.ProcessAxes();
 
+        // Make emulator thread process next frame
+        m_emuProcessEvent.Set();
+
         // Process GUI events
         const size_t evtCount = m_context.eventQueues.gui.try_dequeue_bulk(evts.begin(), evts.size());
         for (size_t i = 0; i < evtCount; i++) {
@@ -1528,7 +1532,6 @@ void App::RunEmulator() {
                 // std::copy_n(framebuffer.begin(), screen.width * screen.height, pixels);
                 SDL_UnlockTexture(fbTexture);
             }
-            screen.frameRequestEvent.Set();
         }
 
         // Calculate performance and update title bar
@@ -1613,6 +1616,7 @@ void App::RunEmulator() {
                 screen.nextFrameTarget += screen.frameInterval;
             }
         }
+        screen.frameRequestEvent.Set();
 
         // ---------------------------------------------------------------------
         // Draw ImGui widgets
@@ -2274,6 +2278,9 @@ void App::EmulatorThread() {
 
         // Emulate one frame
         if (!paused) {
+            if (m_audioSystem.IsSync()) {
+                m_emuProcessEvent.Wait(true);
+            }
             const bool rewindEnabled = m_context.rewindBuffer.IsRunning();
             bool doRunFrame = true;
             if (rewindEnabled && m_context.rewinding) {
