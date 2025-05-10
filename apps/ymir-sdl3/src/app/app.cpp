@@ -1316,6 +1316,40 @@ void App::RunEmulator() {
     while (true) {
         bool fitWindowToScreenNow = false;
 
+        // Wait for frame update from emulator core if in full screen mode and not paused or fast-forwarding
+        const bool fullScreen = m_context.settings.video.fullScreen;
+        screen.videoSync = fullScreen && !paused && m_audioSystem.IsSync();
+        if (fullScreen && !paused && m_audioSystem.IsSync()) {
+            // Deliver frame early if audio buffer is emptying (video sync is slowing down emulation too much).
+            // Attempt to maintain the audio buffer above 60%; present frames up to 30% sooner if it drops.
+            const uint32 audioBufferSize = m_audioSystem.GetBufferCount();
+            const uint32 audioBufferCap = m_audioSystem.GetBufferCapacity();
+            const double audioBufferLevel = 0.6;
+            const double audioBufferPct = (double)audioBufferSize / audioBufferCap;
+            if (audioBufferPct < audioBufferLevel) {
+                const double adjustPct = std::clamp((audioBufferLevel - audioBufferPct) / audioBufferLevel, 0.0, 1.0);
+                screen.nextFrameTarget -=
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(screen.frameInterval * adjustPct * 0.3);
+            }
+
+            // Sleep until the next frame presentation time
+            auto now = clk::now();
+            if (now < screen.nextFrameTarget) {
+                std::this_thread::sleep_until(screen.nextFrameTarget);
+            }
+
+            // Update next frame target
+            auto now2 = clk::now();
+            if (now2 > screen.nextFrameTarget) {
+                // The frame was presented late; set next frame target time relative to now
+                screen.nextFrameTarget = now2 + screen.frameInterval;
+            } else {
+                // The frame was presented on time; increment by the interval
+                screen.nextFrameTarget += screen.frameInterval;
+            }
+        }
+        screen.frameRequestEvent.Set();
+
         // Process SDL events
         SDL_Event evt{};
         while (SDL_PollEvent(&evt)) {
@@ -1584,39 +1618,6 @@ void App::RunEmulator() {
         if (hideMouse) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_None);
         }
-
-        // Wait for frame update from emulator core if in full screen mode and not paused or fast-forwarding
-        const bool fullScreen = m_context.settings.video.fullScreen;
-        screen.videoSync = fullScreen && !paused && m_audioSystem.IsSync();
-        if (fullScreen && !paused && m_audioSystem.IsSync()) {
-            // Deliver frame early if audio buffer is emptying (video sync is slowing down emulation too much).
-            // Attempt to maintain the audio buffer above 60%; present frames up to 30% sooner if it drops.
-            const uint32 audioBufferSize = m_audioSystem.GetBufferCount();
-            const uint32 audioBufferCap = m_audioSystem.GetBufferCapacity();
-            const double audioBufferLevel = 0.6;
-            const double audioBufferPct = (double)audioBufferSize / audioBufferCap;
-            if (audioBufferPct < audioBufferLevel) {
-                const double adjustPct = std::clamp((audioBufferLevel - audioBufferPct) / audioBufferLevel, 0.0, 1.0);
-                screen.nextFrameTarget -=
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(screen.frameInterval * adjustPct * 0.3);
-            }
-
-            // Sleep until the next frame presentation time
-            if (now < screen.nextFrameTarget) {
-                std::this_thread::sleep_until(screen.nextFrameTarget);
-            }
-
-            // Update next frame target
-            auto now2 = clk::now();
-            if (now2 > screen.nextFrameTarget) {
-                // The frame was presented late; set next frame target time relative to now
-                screen.nextFrameTarget = now2 + screen.frameInterval;
-            } else {
-                // The frame was presented on time; increment by the interval
-                screen.nextFrameTarget += screen.frameInterval;
-            }
-        }
-        screen.frameRequestEvent.Set();
 
         // ---------------------------------------------------------------------
         // Draw ImGui widgets
