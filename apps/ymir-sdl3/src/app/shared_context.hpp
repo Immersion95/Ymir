@@ -10,6 +10,7 @@
 #include <app/input/input_context.hpp>
 #include <app/input/input_utils.hpp>
 
+#include <app/debug/cdblock_tracer.hpp>
 #include <app/debug/scu_tracer.hpp>
 #include <app/debug/sh2_tracer.hpp>
 
@@ -35,16 +36,17 @@ struct SharedContext {
 
     input::InputContext inputContext;
 
+    struct Input2D {
+        float x, y;
+    };
+
     struct ControlPadInput {
-        ymir::peripheral::ControlPadButton buttons = ymir::peripheral::ControlPadButton::Default;
+        ymir::peripheral::Button buttons = ymir::peripheral::Button::Default;
 
-        struct DPad {
-            float x, y;
-        };
-        std::unordered_map<input::InputElement, DPad> dpad2DInputs;
+        std::unordered_map<input::InputElement, Input2D> dpad2DInputs;
 
-        void UpdateDPadInput(float sensitivity) {
-            using Button = ymir::peripheral::ControlPadButton;
+        void UpdateDPad(float sensitivity) {
+            using Button = ymir::peripheral::Button;
 
             // Aggregate all D-Pad inputs
             float x = 0.0f;
@@ -65,7 +67,72 @@ struct SharedContext {
         }
     };
 
+    struct AnalogPadInput {
+        ymir::peripheral::Button buttons = ymir::peripheral::Button::Default;
+
+        float x = 0.0f, y = 0.0f; // analog stick: -1.0f (left/up) to 1.0f (down/right)
+        float l = 0.0f, r = 0.0f; // analog triggers: 0.0f (released) to 1.0f (pressed)
+        bool analogMode = true;
+
+        std::unordered_map<input::InputElement, Input2D> dpad2DInputs;
+        std::unordered_map<input::InputElement, Input2D> analogStickInputs;
+        std::unordered_map<input::InputElement, float> analogLInputs;
+        std::unordered_map<input::InputElement, float> analogRInputs;
+
+        void UpdateDPad(float sensitivity) {
+            using Button = ymir::peripheral::Button;
+
+            // Aggregate all D-Pad inputs
+            float x = 0.0f;
+            float y = 0.0f;
+            for (auto &[_, inputs] : dpad2DInputs) {
+                x += inputs.x;
+                y += inputs.y;
+            }
+
+            // Clamp to -1.0..1.0
+            x = std::clamp(x, -1.0f, 1.0f);
+            y = std::clamp(y, -1.0f, 1.0f);
+
+            // Convert combined input into D-Pad button states
+            buttons |= Button::Left | Button::Right | Button::Up | Button::Down;
+            buttons &=
+                ~input::AnalogToDigital2DAxis(x, y, sensitivity, Button::Right, Button::Left, Button::Down, Button::Up);
+        }
+
+        void UpdateAnalogStick() {
+            // Aggregate all analog stick inputs
+            x = 0.0f;
+            y = 0.0f;
+            for (auto &[_, inputs] : analogStickInputs) {
+                x += inputs.x;
+                y += inputs.y;
+            }
+
+            // Clamp to -1.0..1.0
+            x = std::clamp(x, -1.0f, 1.0f);
+            y = std::clamp(y, -1.0f, 1.0f);
+        }
+
+        void UpdateAnalogTriggers() {
+            // Aggregate all analog trigger inputs
+            l = 0.0f;
+            r = 0.0f;
+            for (auto &[_, inputs] : analogLInputs) {
+                l += inputs;
+            }
+            for (auto &[_, inputs] : analogRInputs) {
+                r += inputs;
+            }
+
+            // Clamp to 0.0..1.0
+            l = std::clamp(l, 0.0f, 1.0f);
+            r = std::clamp(r, 0.0f, 1.0f);
+        }
+    };
+
     std::array<ControlPadInput, 2> controlPadInputs;
+    std::array<AnalogPadInput, 2> analogPadInputs;
 
     Profile profile;
     Settings settings{*this};
@@ -104,6 +171,7 @@ struct SharedContext {
         SH2Tracer masterSH2;
         SH2Tracer slaveSH2;
         SCUTracer SCU;
+        CDBlockTracer CDBlock;
     } tracers;
 
     struct Fonts {

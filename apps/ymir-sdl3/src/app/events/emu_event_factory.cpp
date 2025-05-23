@@ -55,6 +55,7 @@ EmuEvent SetDebugTrace(bool enable) {
             ctx.saturn.masterSH2.UseTracer(&ctx.tracers.masterSH2);
             ctx.saturn.slaveSH2.UseTracer(&ctx.tracers.slaveSH2);
             ctx.saturn.SCU.UseTracer(&ctx.tracers.SCU);
+            ctx.saturn.CDBlock.UseTracer(&ctx.tracers.CDBlock);
         }
         devlog::info<grp::base>("Debug tracing {}", (enable ? "enabled" : "disabled"));
     });
@@ -171,6 +172,7 @@ static void InsertPeripheral(peripheral::PeripheralType type, peripheral::Periph
     switch (type) {
     case ymir::peripheral::PeripheralType::None: port.DisconnectPeripherals(); break;
     case ymir::peripheral::PeripheralType::ControlPad: port.ConnectControlPad(); break;
+    case ymir::peripheral::PeripheralType::AnalogPad: port.ConnectAnalogPad(); break;
     }
 }
 
@@ -231,12 +233,12 @@ EmuEvent InsertROMCartridge(std::filesystem::path path) {
         auto &settings = ctx.settings.cartridge.rom;
 
         // Don't even bother if no path was specified
-        if (settings.imagePath.empty()) {
+        if (path.empty()) {
             return;
         }
 
         std::error_code error{};
-        std::vector<uint8> rom = util::LoadFile(settings.imagePath, error);
+        std::vector<uint8> rom = util::LoadFile(path, error);
 
         // Check for file system errors
         if (error) {
@@ -264,7 +266,7 @@ EmuEvent InsertROMCartridge(std::filesystem::path path) {
         // Insert cartridge
         cart::ROMCartridge *cart = ctx.saturn.InsertCartridge<cart::ROMCartridge>();
         if (cart != nullptr) {
-            devlog::info<grp::base>("16 Mbit ROM cartridge inserted with image from {}", settings.imagePath);
+            devlog::info<grp::base>("16 Mbit ROM cartridge inserted with image from {}", path);
             cart->LoadROM(rom);
         }
     });

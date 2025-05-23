@@ -358,8 +358,8 @@ std::string_view ToHumanString(GamepadButton btn) {
     case GamepadButton::Back: return "Back";
     case GamepadButton::Start: return "Start";
     case GamepadButton::Guide: return "Guide";
-    case GamepadButton::LeftThumb: return "LS";
-    case GamepadButton::RightThumb: return "RS";
+    case GamepadButton::LeftThumb: return "LS Click";
+    case GamepadButton::RightThumb: return "RS Click";
     case GamepadButton::DpadUp: return "Up";
     case GamepadButton::DpadDown: return "Down";
     case GamepadButton::DpadLeft: return "Left";

@@ -13,10 +13,9 @@ namespace ymir::peripheral {
 
 class BasePeripheral {
 public:
-    BasePeripheral(PeripheralType type, uint8 typeCode, uint8 reportLength, CBPeripheralReport callback)
+    BasePeripheral(PeripheralType type, uint8 typeCode, CBPeripheralReport callback)
         : m_type(type)
         , m_typeCode(typeCode)
-        , m_reportLength(reportLength)
         , m_cbPeripheralReport(callback) {}
 
     virtual ~BasePeripheral() = default;
@@ -55,16 +54,25 @@ public:
         return m_typeCode;
     }
 
-    uint8 GetReportLength() const {
-        return m_reportLength;
+    virtual bool IsConnected() const {
+        return true;
     }
 
-    bool IsConnected() const {
-        return m_reportLength > 0;
-    }
+    /// @brief Updates the peripheral's inputs.
+    virtual void UpdateInputs() = 0;
 
+    /// @brief Retrieves the length of the peripheral data report in bytes.
+    /// @return the number of bytes of the peripheral report
+    virtual uint8 GetReportLength() const = 0;
+
+    /// @brief Reads the report into the specified output buffer.
+    /// @param[out] out the output buffer
     virtual void Read(std::span<uint8> out) = 0;
 
+    /// @brief Performs low-level access to the peripheral.
+    /// @param[in] ddr the value of the DDR register (direction bits)
+    /// @param[in] value the value to write
+    /// @return the response data
     virtual uint8 WritePDR(uint8 ddr, uint8 value) = 0;
 
 private:
@@ -76,6 +84,10 @@ protected:
     friend class PeripheralPort;
 
     CBPeripheralReport m_cbPeripheralReport;
+
+    void SetTypeCode(uint8 typeCode) {
+        m_typeCode = typeCode & 0xF;
+    }
 };
 
 } // namespace ymir::peripheral

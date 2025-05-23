@@ -6,7 +6,8 @@ namespace app::ui {
 
 PeripheralBindsWindow::PeripheralBindsWindow(SharedContext &context)
     : WindowBase(context)
-    , m_controlPadView(context) {}
+    , m_controlPadView(context)
+    , m_analogPadView(context) {}
 
 void PeripheralBindsWindow::Open(uint32 portIndex, uint32 slotIndex) {
     m_portIndex = std::min(portIndex, 1u);
@@ -36,6 +37,9 @@ void PeripheralBindsWindow::DrawContents() {
     case peripheral::PeripheralType::None: break;
     case peripheral::PeripheralType::ControlPad:
         m_controlPadView.Display(settings.controlPadBinds, &m_context.controlPadInputs[m_portIndex]);
+        break;
+    case peripheral::PeripheralType::AnalogPad:
+        m_analogPadView.Display(settings.analogPadBinds, &m_context.analogPadInputs[m_portIndex]);
         break;
     }
 }

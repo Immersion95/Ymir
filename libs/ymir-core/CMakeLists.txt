@@ -14,6 +14,7 @@ add_library(ymir-core
     include/ymir/db/ipl_db.hpp
     include/ymir/db/rom_cart_db.hpp
 
+    include/ymir/debug/cdblock_tracer_base.hpp
     include/ymir/debug/scu_tracer_base.hpp
     include/ymir/debug/sh2_tracer_base.hpp
 
@@ -78,10 +79,12 @@ add_library(ymir-core
     include/ymir/hw/smpc/peripheral/peripheral_base.hpp
     include/ymir/hw/smpc/peripheral/peripheral_callbacks.hpp
     include/ymir/hw/smpc/peripheral/peripheral_defs.hpp
+    include/ymir/hw/smpc/peripheral/peripheral_impl_analog_pad.hpp
     include/ymir/hw/smpc/peripheral/peripheral_impl_control_pad.hpp
     include/ymir/hw/smpc/peripheral/peripheral_impl_null.hpp
     include/ymir/hw/smpc/peripheral/peripheral_port.hpp
-    include/ymir/hw/smpc/peripheral/peripheral_state_control_pad.hpp
+    include/ymir/hw/smpc/peripheral/peripheral_report.hpp
+    include/ymir/hw/smpc/peripheral/peripheral_state_common.hpp
 
     include/ymir/hw/vdp/vdp.hpp
     include/ymir/hw/vdp/vdp_callbacks.hpp
@@ -193,6 +196,7 @@ add_library(ymir-core
     src/ymir/hw/smpc/rtc.cpp
     src/ymir/hw/smpc/smpc.cpp
 
+    src/ymir/hw/smpc/peripheral/peripheral_impl_analog_pad.cpp
     src/ymir/hw/smpc/peripheral/peripheral_impl_control_pad.cpp
 
     src/ymir/hw/sh2/sh2.cpp
@@ -249,6 +253,7 @@ target_precompile_headers(ymir-core
         <atomic>
         <bit>
         <cassert>
+        <charconv>
         <cinttypes>
         <climits>
         <cmath>

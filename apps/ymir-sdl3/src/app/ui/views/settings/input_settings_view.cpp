@@ -1,5 +1,7 @@
 #include "input_settings_view.hpp"
 
+#include <app/events/gui_event_factory.hpp>
+
 #include <app/ui/widgets/common_widgets.hpp>
 #include <app/ui/widgets/peripheral_widgets.hpp>
 
@@ -20,14 +22,18 @@ void InputSettingsView::Display() {
             ImGui::SeparatorText("Port 1");
             ImGui::PopFont();
 
-            MakeDirty(widgets::Port1PeripheralSelector(m_context));
+            if (MakeDirty(widgets::Port1PeripheralSelector(m_context))) {
+                m_context.EnqueueEvent(events::gui::RebindInputs());
+            }
         }
         if (ImGui::TableNextColumn()) {
             ImGui::PushFont(m_context.fonts.sansSerif.large.bold);
             ImGui::SeparatorText("Port 2");
             ImGui::PopFont();
 
-            MakeDirty(widgets::Port2PeripheralSelector(m_context));
+            if (MakeDirty(widgets::Port2PeripheralSelector(m_context))) {
+                m_context.EnqueueEvent(events::gui::RebindInputs());
+            }
         }
         ImGui::EndTable();
     }

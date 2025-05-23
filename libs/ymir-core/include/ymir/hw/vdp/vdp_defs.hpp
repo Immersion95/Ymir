@@ -67,18 +67,52 @@ FORCE_INLINE Color888 ConvertRGB555to888(Color555 color) {
 
 template <std::integral T>
 struct Coord {
-    Coord() = default;
+    static_assert(std::is_trivial_v<T> && std::is_standard_layout_v<T>);
 
-    Coord(T x, T y)
-        : x(x)
-        , y(y) {}
+    std::array<T, 2> elements;
 
-    T x = 0;
-    T y = 0;
+    T &x() {
+        return elements[0];
+    }
+
+    T &y() {
+        return elements[1];
+    }
+
+    const T &x() const {
+        return elements[0];
+    }
+
+    const T &y() const {
+        return elements[1];
+    }
 };
+
+template <std::size_t I, std::integral T>
+FORCE_INLINE constexpr auto &get(Coord<T> &coord) noexcept {
+    return std::get<I>(coord.elements);
+}
+
+template <std::size_t I, std::integral T>
+FORCE_INLINE constexpr const auto &get(const Coord<T> &coord) noexcept {
+    return std::get<I>(coord.elements);
+}
+
+template <std::size_t I, std::integral T>
+FORCE_INLINE constexpr auto &&get(Coord<T> &&coord) noexcept {
+    return std::move(std::get<I>(coord.elements));
+}
+
+template <std::size_t I, std::integral T>
+FORCE_INLINE constexpr const auto &&get(const Coord<T> &&coord) noexcept {
+    return std::move(std::get<I>(coord.elements));
+}
 
 using CoordS32 = Coord<sint32>;
 using CoordU32 = Coord<uint32>;
+
+static_assert(std::is_trivial_v<CoordS32> && std::is_standard_layout_v<CoordS32>);
+static_assert(std::is_trivial_v<CoordU32> && std::is_standard_layout_v<CoordU32>);
 
 struct Dimensions {
     uint32 width;
@@ -86,3 +120,14 @@ struct Dimensions {
 };
 
 } // namespace ymir::vdp
+
+namespace std {
+
+using namespace ymir::vdp;
+
+template <std::integral T>
+struct tuple_size<Coord<T>> : integral_constant<size_t, 2> {};
+
+template <size_t I, std::integral T>
+struct tuple_element<I, Coord<T>> : tuple_element<I, decltype(Coord<T>::elements)> {};
+} // namespace std

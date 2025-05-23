@@ -1,6 +1,7 @@
 #pragma once
 
 #include "peripheral_base.hpp"
+#include "peripheral_impl_analog_pad.hpp"
 #include "peripheral_impl_control_pad.hpp"
 #include "peripheral_impl_null.hpp"
 
@@ -38,6 +39,10 @@ public:
         return ConnectPeripheral<ControlPad>(m_cbPeripheralReport);
     }
 
+    AnalogPad *ConnectAnalogPad() {
+        return ConnectPeripheral<AnalogPad>(m_cbPeripheralReport);
+    }
+
     void DisconnectPeripherals() {
         ConnectPeripheral<NullPeripheral>();
     }
@@ -65,8 +70,10 @@ private:
 
     friend class smpc::SMPC;
 
-    uint32 GetReportLength() const {
+    // Updates inputs and returns the report length
+    uint32 UpdateInputs() const {
         if (m_peripheral->IsConnected()) {
+            m_peripheral->UpdateInputs();
             return 2 + m_peripheral->GetReportLength();
         } else {
             return 1;
@@ -74,13 +81,11 @@ private:
     }
 
     void Read(std::span<uint8> out) const {
-        assert(out.size() == GetReportLength());
-
-        if (m_peripheral->IsConnected() && m_peripheral->GetReportLength() <= 15) {
+        if (m_peripheral->IsConnected() && out.size() <= 15) {
             // TODO: support multi-tap
             // TODO: support report lengths longer than 15
             // [0] 0xF1 -> 7-4 = F=no multitap/device directly connected; 3-0 = 1 device
-            // [1] 0x02 -> 7-4 = 0=control pad ID; 3-0 = 2 data bytes
+            // [1] 0xIN -> 7-4 = I=control pad ID; 3-0 = N data bytes
             // [2..N]   -> peripheral-specific report
             out[0] = 0xF1;
             out[1] = (m_peripheral->GetTypeCode() << 4u) | m_peripheral->GetReportLength();

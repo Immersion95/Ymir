@@ -225,6 +225,27 @@ public:
                 input::InputBind right{actions::control_pad::Right};
                 input::InputBind dpad{actions::control_pad::DPad};
             } controlPadBinds;
+
+            struct AnalogPadBinds {
+                input::InputBind a{actions::analog_pad::A};
+                input::InputBind b{actions::analog_pad::B};
+                input::InputBind c{actions::analog_pad::C};
+                input::InputBind x{actions::analog_pad::X};
+                input::InputBind y{actions::analog_pad::Y};
+                input::InputBind z{actions::analog_pad::Z};
+                input::InputBind l{actions::analog_pad::L};
+                input::InputBind r{actions::analog_pad::R};
+                input::InputBind start{actions::analog_pad::Start};
+                input::InputBind up{actions::analog_pad::Up};
+                input::InputBind down{actions::analog_pad::Down};
+                input::InputBind left{actions::analog_pad::Left};
+                input::InputBind right{actions::analog_pad::Right};
+                input::InputBind dpad{actions::analog_pad::DPad};
+                input::InputBind analogStick{actions::analog_pad::AnalogStick};
+                input::InputBind analogL{actions::analog_pad::AnalogL};
+                input::InputBind analogR{actions::analog_pad::AnalogR};
+                input::InputBind switchMode{actions::analog_pad::SwitchMode};
+            } analogPadBinds;
         };
         Port port1;
         Port port2;
@@ -294,6 +315,10 @@ public:
     // Returns all unbound actions.
     [[nodiscard]] std::unordered_set<input::MappedAction> ResetBinds(Input::Port::ControlPadBinds &binds);
 
+    // Restores all default input binds for the specified 3D control pad
+    // Returns all unbound actions.
+    [[nodiscard]] std::unordered_set<input::MappedAction> ResetBinds(Input::Port::AnalogPadBinds &binds);
+
 private:
     SharedContext &m_context;
 
@@ -308,6 +333,8 @@ private:
     InputMap m_actionInputs;
     InputMap m_port1ControlPadInputs;
     InputMap m_port2ControlPadInputs;
+    InputMap m_port1AnalogPadInputs;
+    InputMap m_port2AnalogPadInputs;
 
     InputMap &GetInputMapForContext(void *context);
 };

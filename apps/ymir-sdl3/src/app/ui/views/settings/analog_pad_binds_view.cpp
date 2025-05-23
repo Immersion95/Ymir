@@ -1,15 +1,15 @@
-#include "control_pad_binds_view.hpp"
+#include "analog_pad_binds_view.hpp"
 
 #include <app/events/gui_event_factory.hpp>
 
 namespace app::ui {
 
-ControlPadBindsView::ControlPadBindsView(SharedContext &context)
+AnalogPadBindsView::AnalogPadBindsView(SharedContext &context)
     : SettingsViewBase(context)
     , m_inputCaptureWidget(context, m_unboundActionsWidget)
     , m_unboundActionsWidget(context) {}
 
-void ControlPadBindsView::Display(Settings::Input::Port::ControlPadBinds &binds, void *context) {
+void AnalogPadBindsView::Display(Settings::Input::Port::AnalogPadBinds &binds, void *context) {
     if (ImGui::Button("Restore defaults")) {
         m_unboundActionsWidget.Capture(m_context.settings.ResetBinds(binds));
         MakeDirty();
@@ -19,7 +19,7 @@ void ControlPadBindsView::Display(Settings::Input::Port::ControlPadBinds &binds,
     m_unboundActionsWidget.Display();
     if (ImGui::BeginTable("hotkeys", 1 + input::kNumBindsPerInput,
                           ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_ScrollY)) {
-        ImGui::TableSetupColumn("Button", ImGuiTableColumnFlags_WidthFixed, 70.0f * m_context.displayScale);
+        ImGui::TableSetupColumn("Button", ImGuiTableColumnFlags_WidthFixed, 85.0f * m_context.displayScale);
         for (size_t i = 0; i < input::kNumBindsPerInput; i++) {
             ImGui::TableSetupColumn(fmt::format("Hotkey {}", i + 1).c_str(), ImGuiTableColumnFlags_WidthStretch, 1.0f);
         }
@@ -52,6 +52,10 @@ void ControlPadBindsView::Display(Settings::Input::Port::ControlPadBinds &binds,
         drawRow(binds.down);
         drawRow(binds.right);
         drawRow(binds.dpad);
+        drawRow(binds.analogStick);
+        drawRow(binds.analogL);
+        drawRow(binds.analogR);
+        drawRow(binds.switchMode);
 
         m_inputCaptureWidget.DrawCapturePopup();
 

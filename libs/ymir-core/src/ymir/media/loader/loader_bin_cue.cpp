@@ -88,6 +88,7 @@ bool Load(std::filesystem::path cuePath, Disc &disc, bool preloadToRAM) {
     uint32 pregapM = 0;
     uint32 pregapS = 0;
     uint32 pregapF = 0;
+    uint32 pregapLength = 0;
     std::array<uintmax_t, 99> trackFileOffsets{};
     std::array<uint32, 99> trackFileIndices{};
 
@@ -264,6 +265,7 @@ bool Load(std::filesystem::path cuePath, Disc &disc, bool preloadToRAM) {
             hasIndex0 = false;
             hasPregap = false;
             hasPostgap = false;
+            pregapLength = 0;
             trackFileIndices[currTrackIndex] = currFileIndex;
         } else if (keyword == "INDEX") {
             // INDEX [number] [mm:ss:ff]
@@ -293,9 +295,7 @@ bool Load(std::filesystem::path cuePath, Disc &disc, bool preloadToRAM) {
                                  prevTrack.sectorSize;
             }
 
-            // We don't care about subindices for now
-
-            // Look for the data index only
+            // Process indices
             if (indexNum == 0) {
                 if (hasPregap) {
                     // fmt::println("BIN/CUE: Found INDEX 00 and PREGAP in the same TRACK (line {})", lineNum);
@@ -316,6 +316,9 @@ bool Load(std::filesystem::path cuePath, Disc &disc, bool preloadToRAM) {
                             binaryReader, trackFileOffsets[currTrackIndex - 1], binFileLength);
                         frameAddress += frames;
                     }
+
+                    // Finish last index of previous track
+                    prevTrack.indices.back().endFrameAddress = track.startFrameAddress + frameAddress - 1;
                 }
 
                 // If the pregap in audio tracks is actually silent, skip it
@@ -324,6 +327,7 @@ bool Load(std::filesystem::path cuePath, Disc &disc, bool preloadToRAM) {
                     const uintmax_t pregapStart = hasIndex0
                                                       ? TimestampToFrameAddress(prevM, prevS, prevF)
                                                       : pregapEnd - TimestampToFrameAddress(pregapM, pregapS, pregapF);
+                    pregapLength = pregapEnd - pregapStart;
                     std::vector<uint8> sector{};
                     sector.resize(track.sectorSize);
                     bool isPregapSilent = true;
@@ -346,7 +350,26 @@ bool Load(std::filesystem::path cuePath, Disc &disc, bool preloadToRAM) {
                 track.startFrameAddress = frameAddress;
                 trackFileOffsets[currTrackIndex] = binFileOffset;
 
+                // Start index
+                assert(track.indices.empty());
+                auto &index = track.indices.emplace_back();
+                index.startFrameAddress = frameAddress;
+
                 // fmt::println("BIN/CUE: Track {} offset = {:X}", currTrackIndex, trackFileOffsets[currTrackIndex]);
+            } else {
+                // Indices must be sequential
+                if (indexNum != track.indices.size() + 1) {
+                    // fmt::println("BIN/CUE: Unexpected index {} on track {}", indexNum, currTrackIndex);
+                    return false;
+                }
+                const uint32 indexFrameAddress = TimestampToFrameAddress(m, s, f) - pregapLength;
+
+                // Finish previous index
+                track.indices.back().endFrameAddress = track.startFrameAddress + indexFrameAddress - 1;
+
+                // Add new index to current track
+                auto &index = track.indices.emplace_back();
+                track.indices[indexNum - 1].startFrameAddress = track.startFrameAddress + indexFrameAddress;
             }
 
             prevM = m;
@@ -376,6 +399,7 @@ bool Load(std::filesystem::path cuePath, Disc &disc, bool preloadToRAM) {
             pregapM = m;
             pregapS = s;
             pregapF = f;
+            pregapLength = TimestampToFrameAddress(m, s, f);
         } else if (keyword == "POSTGAP") {
             // POSTGAP [mm:ss:ff]
             if (!hasIndex) {
@@ -418,6 +442,9 @@ bool Load(std::filesystem::path cuePath, Disc &disc, bool preloadToRAM) {
         track.binaryReader =
             std::make_unique<SharedSubviewBinaryReader>(binaryReader, trackFileOffsets[currTrackIndex], length);
         frameAddress += frames;
+
+        // Finish last index
+        track.indices.back().endFrameAddress = frameAddress - 1;
     }
 
     // Finish session

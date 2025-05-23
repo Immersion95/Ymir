@@ -2,6 +2,7 @@
 
 #include <app/ui/window_base.hpp>
 
+#include <app/ui/views/settings/analog_pad_binds_view.hpp>
 #include <app/ui/views/settings/control_pad_binds_view.hpp>
 
 namespace app::ui {
@@ -21,6 +22,7 @@ private:
     uint32 m_slotIndex;
 
     ControlPadBindsView m_controlPadView;
+    AnalogPadBindsView m_analogPadView;
 };
 
 } // namespace app::ui

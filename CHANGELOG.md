@@ -4,11 +4,22 @@
 
 ### New features and improvements
 
+- Core: Performance improvements, especially for ARM builds. (@Wunkolo)
+- Input: Implemented 3D Control Pad. (#28)
 - Media: Preliminary support for CHD files. (#48)
+- Media: Support multi-indexed audio tracks (BIN/CUE only). (#58)
+- Debug: Simple CD Block commmand tracer window.
 
 ### Fixes
 
+- App: Customized profile paths are now created at the specified location instead of the default. (#119, #126; @lvsweat)
 - CD Block: Fix audio track sector sizes. Fixes some CD audio track playback glitches with certain images (particularly MDF/MDS).
+- CD Block: Free last buffer from partition when ending a Get Then Delete Sector transfer when the last sector isn't fully read. Fixes some game boot issues.
+- IPL: Automatically load IPL ROM when switching disc images. (#128)
+- VDP2: Fix bitmap base address for RBGs. Fixes several graphics glitches on menus and in-game in Need for Speed.
+- VDP2: Don't increment vertical mosaic counter if mosaic is disabled. Fixes text boxes and character portraits in Grandia. (#91)
+- VDP2: Fix line screen scroll in double-density interlace mode. Fixes stretched videos in Grandia. (#91)
+- SH-2: Fix PC offsets for exceptions, interrupts, TRAPA and RTE. Fixes some game boot issues.
 
 
 ## Version 0.1.3
@@ -29,6 +40,7 @@
 - App: Mitigate input lag in every mode (#101)
 - App: Display reverse, rewind, fast-forward and pause indicators on the top-right corner of the viewport. (#103)
 - Build: Added macOS builds. (huge thanks to @Wunkolo!)
+- Core: Several performance and stability improvements. (@Wunkolo)
 
 ### Fixes
 

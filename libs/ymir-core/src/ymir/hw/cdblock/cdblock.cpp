@@ -11,6 +11,26 @@
 
 namespace ymir::cdblock {
 
+// -----------------------------------------------------------------------------
+// Debugger
+
+FORCE_INLINE static void TraceProcessCommand(debug::ICDBlockTracer *tracer, uint16 cr1, uint16 cr2, uint16 cr3,
+                                             uint16 cr4) {
+    if (tracer) {
+        return tracer->ProcessCommand(cr1, cr2, cr3, cr4);
+    }
+}
+
+FORCE_INLINE static void TraceProcessCommandResponse(debug::ICDBlockTracer *tracer, uint16 cr1, uint16 cr2, uint16 cr3,
+                                                     uint16 cr4) {
+    if (tracer) {
+        return tracer->ProcessCommandResponse(cr1, cr2, cr3, cr4);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Implementation
+
 CDBlock::CDBlock(core::Scheduler &scheduler, core::Configuration::CDBlock &config)
     : m_scheduler(scheduler) {
 
@@ -525,8 +545,8 @@ T CDBlock::PeekReg(uint32 address) {
         address &= 0x3F;
 
         switch (address) {
-        case 0x00: return m_xferBuffer[m_xferBufferPos];
-        case 0x02: return m_xferBuffer[m_xferBufferPos];
+        case 0x00: return m_xferBuffer[m_xferBufferPos % m_xferBuffer.size()];
+        case 0x02: return m_xferBuffer[m_xferBufferPos % m_xferBuffer.size()];
         case 0x08: return m_HIRQ;
         case 0x0C: return m_HIRQMASK;
         case 0x18: return m_CR[0];
@@ -549,8 +569,8 @@ void CDBlock::PokeReg(uint32 address, T value) {
         address &= 0x3F;
 
         switch (address) {
-        case 0x00: m_xferBuffer[m_xferBufferPos] = value; break;
-        case 0x02: m_xferBuffer[m_xferBufferPos] = value; break;
+        case 0x00: m_xferBuffer[m_xferBufferPos % m_xferBuffer.size()] = value; break;
+        case 0x02: m_xferBuffer[m_xferBufferPos % m_xferBuffer.size()] = value; break;
         case 0x08: m_HIRQ = value; break;
         case 0x0C: m_HIRQMASK = value; break;
         case 0x18: m_CR[0] = value; break;
@@ -616,12 +636,13 @@ bool CDBlock::SetupGenericPlayback(uint32 startParam, uint32 endParam, uint16 re
         // Find track containing the requested start frame address
         const uint8 trackIndex = session.FindTrackIndex(frameAddress);
         if (trackIndex != 0xFF) {
+            const uint8 index = session.tracks[trackIndex].FindIndex(frameAddress);
             m_status.statusCode = kStatusCodeSeek;
             m_status.flags = 0x8;     // CD-ROM decoding flag
             m_status.repeatCount = 0; // first repeat
             m_status.controlADR = session.tracks[trackIndex].controlADR;
             m_status.track = trackIndex + 1;
-            m_status.index = 1; // TODO: handle indexes
+            m_status.index = index;
 
             // TODO: delay seek for a realistic amount of time
             if (m_status.controlADR == 0x41) {
@@ -660,7 +681,7 @@ bool CDBlock::SetupGenericPlayback(uint32 startParam, uint32 endParam, uint16 re
         }
         if (endParam == 0) {
             endTrack = session.lastTrackIndex + 1;
-            endIndex = 1;
+            endIndex = session.tracks[session.lastTrackIndex].indices.size() + 1;
         }
 
         devlog::debug<grp::play_init>("Track:Index range {:02d}:{:02d}-{:02d}:{:02d} ", startTrack, startIndex,
@@ -672,13 +693,14 @@ bool CDBlock::SetupGenericPlayback(uint32 startParam, uint32 endParam, uint16 re
         uint8 lastTrack = session.lastTrackIndex + 1;
         startTrack = std::clamp(startTrack, firstTrack, lastTrack);
         endTrack = std::clamp(endTrack, firstTrack, lastTrack);
-        devlog::debug<grp::play_init>("Track range after clamping {:02d}-{:02d}", startTrack, endTrack);
-
-        // TODO: tracks need to store index information
+        startIndex = std::clamp<uint8>(startIndex, 1, session.tracks[startTrack - 1].indices.size());
+        endIndex = std::clamp<uint8>(endIndex, 1, session.tracks[endTrack - 1].indices.size());
+        devlog::debug<grp::play_init>("Track:Index range after clamping {:02d}:{:02d}-{:02d}:{:02d}", startTrack,
+                                      startIndex, endTrack, endIndex);
 
         // Play frame address range for the specified tracks
-        m_playStartPos = session.tracks[startTrack - 1].startFrameAddress;
-        m_playEndPos = session.tracks[endTrack - 1].endFrameAddress;
+        m_playStartPos = session.tracks[startTrack - 1].indices[startIndex - 1].startFrameAddress;
+        m_playEndPos = session.tracks[endTrack - 1].indices[endIndex - 1].endFrameAddress;
 
         uint32 frameAddress = m_status.frameAddress;
         if (resetPos || frameAddress < m_playStartPos || frameAddress > m_playEndPos) {
@@ -693,7 +715,7 @@ bool CDBlock::SetupGenericPlayback(uint32 startParam, uint32 endParam, uint16 re
             m_status.repeatCount = 0; // first repeat
             m_status.controlADR = track->controlADR;
             m_status.track = track->index;
-            m_status.index = 1; // TODO: handle indexes
+            m_status.index = track->FindIndex(frameAddress);
             m_status.flags = m_status.controlADR == 0x01 ? 0x8 : 0x0;
 
             // TODO: delay seek for a realistic amount of time
@@ -703,7 +725,7 @@ bool CDBlock::SetupGenericPlayback(uint32 startParam, uint32 endParam, uint16 re
                 // Force 1x speed if playing audio track
                 m_targetDriveCycles = kDriveCyclesPlaying1x;
             }
-            devlog::debug<grp::play_init>("Track FAD range {:06X}-{:06X}", m_playStartPos, m_playEndPos);
+            devlog::debug<grp::play_init>("Track:Index FAD range {:06X}-{:06X}", m_playStartPos, m_playEndPos);
 
             if (resetPos) {
                 m_status.frameAddress = m_playStartPos;
@@ -777,7 +799,7 @@ bool CDBlock::SetupFilePlayback(uint32 fileID, uint32 offset, uint8 filterNumber
     m_status.repeatCount = 0; // first repeat
     m_status.controlADR = session.tracks[trackIndex].controlADR;
     m_status.track = trackIndex + 1;
-    m_status.index = 1; // TODO: handle indexes
+    m_status.index = 1;
 
     devlog::debug<grp::play_init>("Read file {}, offset {}, filter {}, frame addresses {:06X} to {:06X}", fileID,
                                   offset, filterNumber, m_playStartPos, m_playEndPos);
@@ -956,7 +978,7 @@ void CDBlock::ProcessDriveStatePlay() {
 
                     m_status.frameAddress++;
                     m_status.track = track->index;
-                    m_status.index = 1; // TODO: handle indexes
+                    m_status.index = track->FindIndex(m_status.frameAddress);
                     m_status.controlADR = track->controlADR;
                     m_status.flags = track->controlADR == 0x41 ? 0x8 : 0x0;
                 }
@@ -1072,6 +1094,15 @@ void CDBlock::SetupGetSectorTransfer(uint16 sectorPos, uint16 sectorCount, uint8
     ReadSector();
 }
 
+void CDBlock::SetupPutSectorTransfer(uint16 sectorCount, uint8 partitionNumber) {
+    devlog::trace<grp::xfer>("Starting sector write transfer - {} sectors into buffer partition {}", sectorCount,
+                             partitionNumber);
+
+    // TODO: setup write transfer parameters
+
+    devlog::debug<grp::xfer>("Put sector transfer is unimplemented");
+}
+
 uint32 CDBlock::SetupFileInfoTransfer(uint32 fileID) {
     devlog::debug<grp::xfer>("Starting file info transfer - file ID {:X}", fileID);
 
@@ -1168,7 +1199,7 @@ bool CDBlock::SetupSubcodeTransfer(uint8 type) {
         if (m_disc.sessions.back().tracks[m_status.track - 1].sectorSize < 2448) {
             m_xferBuffer.fill(0xFF);
         } else {
-            devlog::debug<grp::xfer>("Subcode R-W transfer is unimplemented");
+            devlog::trace<grp::xfer>("Subcode R-W transfer is unimplemented");
             m_xferBuffer.fill(0xFF);
         }
 
@@ -1196,7 +1227,15 @@ void CDBlock::EndTransfer() {
     // Trigger EHST HIRQ if ending certain sector transfers
     switch (m_xferType) {
     case TransferType::GetSector:
-    case TransferType::GetThenDeleteSector: {
+    case TransferType::GetThenDeleteSector: //
+    {
+        if (m_xferType == TransferType::GetThenDeleteSector) {
+            if (m_xferBufferPos < m_getSectorLength / sizeof(uint16)) {
+                // Delete sector if not fully read
+                m_partitionManager.RemoveTail(m_xferPartition, m_xferSectorPos);
+                devlog::trace<grp::xfer>("Sector freed");
+            }
+        }
         SetInterrupt(kHIRQ_EHST);
         break;
     }
@@ -1270,6 +1309,8 @@ void CDBlock::DoWriteTransfer(uint16 value) {
     /*switch (m_xferType) {
     }*/
 
+    // TODO: raise kHIRQ_EHST if not enough buffer space available
+
     m_xferExtraCount++;
 
     AdvanceTransfer();
@@ -1318,6 +1359,7 @@ void CDBlock::SetupCommand() {
 
 FORCE_INLINE void CDBlock::ProcessCommand() {
     devlog::trace<grp::base>("Processing command {:04X} {:04X} {:04X} {:04X}", m_CR[0], m_CR[1], m_CR[2], m_CR[3]);
+    TraceProcessCommand(m_tracer, m_CR[0], m_CR[1], m_CR[2], m_CR[3]);
 
     const uint8 cmd = m_CR[0] >> 8u;
 
@@ -1356,7 +1398,7 @@ FORCE_INLINE void CDBlock::ProcessCommand() {
     case 0x61: CmdGetSectorData(); break;
     case 0x62: CmdDeleteSectorData(); break;
     case 0x63: CmdGetThenDeleteSectorData(); break;
-    // case 0x64: CmdPutSectorData(); break;
+    case 0x64: CmdPutSectorData(); break;
     // case 0x65: CmdCopySectorData(); break;
     // case 0x66: CmdMoveSectorData(); break;
     case 0x67: CmdGetCopyError(); break;
@@ -1397,6 +1439,7 @@ FORCE_INLINE void CDBlock::ProcessCommand() {
     }
 
     devlog::trace<grp::base>("Command response:  {:04X} {:04X} {:04X} {:04X}", m_CR[0], m_CR[1], m_CR[2], m_CR[3]);
+    TraceProcessCommandResponse(m_tracer, m_CR[0], m_CR[1], m_CR[2], m_CR[3]);
 }
 
 void CDBlock::CmdGetStatus() {
@@ -2437,8 +2480,10 @@ void CDBlock::CmdGetSectorData() {
 
     bool reject = false;
     if (partitionNumber >= kNumPartitions) [[unlikely]] {
+        devlog::trace<grp::base>("Get then delete sector transfer rejected: invalid partition {}", partitionNumber);
         reject = true;
     } else if (m_partitionManager.GetBufferCount(partitionNumber) == 0) [[unlikely]] {
+        devlog::trace<grp::base>("Get then delete sector transfer rejected: no data in partition {}", partitionNumber);
         reject = true;
     } else {
         SetupGetSectorTransfer(sectorOffset, sectorNumber, partitionNumber, false);
@@ -2469,8 +2514,10 @@ void CDBlock::CmdDeleteSectorData() {
 
     bool reject = false;
     if (partitionNumber >= kNumPartitions) [[unlikely]] {
+        devlog::trace<grp::base>("Delete sector rejected: invalid partition {}", partitionNumber);
         reject = true;
     } else if (m_partitionManager.GetBufferCount(partitionNumber) == 0) [[unlikely]] {
+        devlog::trace<grp::base>("Delete sector rejected: no data in partition {}", partitionNumber);
         reject = true;
     } else {
         const uint32 numFreedSectors = m_partitionManager.DeleteSectors(partitionNumber, sectorOffset, sectorNumber);
@@ -2502,8 +2549,10 @@ void CDBlock::CmdGetThenDeleteSectorData() {
 
     bool reject = false;
     if (partitionNumber >= kNumPartitions) [[unlikely]] {
+        devlog::trace<grp::base>("Get then delete sector transfer rejected: invalid partition {}", partitionNumber);
         reject = true;
     } else if (m_partitionManager.GetBufferCount(partitionNumber) == 0) [[unlikely]] {
+        devlog::trace<grp::base>("Get then delete sector transfer rejected: no data in partition {}", partitionNumber);
         reject = true;
     } else {
         SetupGetSectorTransfer(sectorOffset, sectorNumber, partitionNumber, true);
@@ -2528,16 +2577,27 @@ void CDBlock::CmdPutSectorData() {
     // <blank>
     // partition number   <blank>
     // sector number
-    // const uint8 partitionNumber = bit::extract<8, 15>(m_CR[2]);
-    // const uint16 sectorNumber = m_CR[3];
+    const uint8 partitionNumber = bit::extract<8, 15>(m_CR[2]);
+    const uint16 sectorNumber = m_CR[3];
 
-    // TODO: setup sector write transfer
-    // TODO: raise kHIRQ_EHST if not enough buffer space available
-    // TODO: should set status flag kStatusFlagXferRequest until ready
-    devlog::info<grp::base>("Put sector data command is unimplemented");
+    bool reject = false;
+    if (partitionNumber >= kNumPartitions) [[unlikely]] {
+        devlog::trace<grp::base>("Put sector transfer rejected: invalid partition {}", partitionNumber);
+        reject = true;
+    } else if (m_partitionManager.GetFreeBufferCount() == 0) [[unlikely]] {
+        devlog::trace<grp::base>("Put sector transfer rejected: no free buffers available");
+        reject = true;
+    } else {
+        SetupPutSectorTransfer(sectorNumber, partitionNumber);
+        // TODO: should set status flag kStatusFlagXferRequest until ready
+    }
 
     // Output structure: standard CD status data
-    ReportCDStatus();
+    if (reject) [[unlikely]] {
+        ReportCDStatus(kStatusReject);
+    } else {
+        ReportCDStatus();
+    }
 
     SetInterrupt(kHIRQ_CMOK | kHIRQ_DRDY);
 }

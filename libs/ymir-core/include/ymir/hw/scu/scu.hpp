@@ -263,11 +263,6 @@ private:
     template <bool acknowledge>
     void UpdateInterruptLevel();
 
-    // -------------------------------------------------------------------------
-    // Debugger
-
-    debug::ISCUTracer *m_tracer = nullptr;
-
 public:
     // -------------------------------------------------------------------------
     // Callbacks
@@ -400,6 +395,7 @@ public:
 
 private:
     Probe m_probe{*this};
+    debug::ISCUTracer *m_tracer = nullptr;
 };
 
 } // namespace ymir::scu

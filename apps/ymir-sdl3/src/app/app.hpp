@@ -11,6 +11,7 @@
 #include "ui/windows/settings_window.hpp"
 #include "ui/windows/system_state_window.hpp"
 
+#include "ui/windows/debug/cdblock_window_set.hpp"
 #include "ui/windows/debug/debug_output_window.hpp"
 #include "ui/windows/debug/memory_viewer_window.hpp"
 #include "ui/windows/debug/scu_window_set.hpp"
@@ -125,10 +126,9 @@ private:
 
     ui::SH2WindowSet m_masterSH2WindowSet;
     ui::SH2WindowSet m_slaveSH2WindowSet;
-
     ui::SCUWindowSet m_scuWindowSet;
-
     ui::VDPWindowSet m_vdpWindowSet;
+    ui::CDBlockWindowSet m_cdblockWindowSet;
 
     ui::DebugOutputWindow m_debugOutputWindow;
 

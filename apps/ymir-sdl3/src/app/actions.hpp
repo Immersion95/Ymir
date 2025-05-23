@@ -122,4 +122,27 @@ namespace control_pad {
 
 } // namespace control_pad
 
+namespace analog_pad {
+
+    inline constexpr auto A = input::Action::Button(0xC02000, "Saturn 3D Control Pad", "A");
+    inline constexpr auto B = input::Action::Button(0xC02001, "Saturn 3D Control Pad", "B");
+    inline constexpr auto C = input::Action::Button(0xC02002, "Saturn 3D Control Pad", "C");
+    inline constexpr auto X = input::Action::Button(0xC02003, "Saturn 3D Control Pad", "X");
+    inline constexpr auto Y = input::Action::Button(0xC02004, "Saturn 3D Control Pad", "Y");
+    inline constexpr auto Z = input::Action::Button(0xC02005, "Saturn 3D Control Pad", "Z");
+    inline constexpr auto L = input::Action::Button(0xC02006, "Saturn 3D Control Pad", "L");
+    inline constexpr auto R = input::Action::Button(0xC02007, "Saturn 3D Control Pad", "R");
+    inline constexpr auto Start = input::Action::Button(0xC02008, "Saturn 3D Control Pad", "Start");
+    inline constexpr auto Up = input::Action::Button(0xC02009, "Saturn 3D Control Pad", "Up");
+    inline constexpr auto Down = input::Action::Button(0xC0200A, "Saturn 3D Control Pad", "Down");
+    inline constexpr auto Left = input::Action::Button(0xC0200B, "Saturn 3D Control Pad", "Left");
+    inline constexpr auto Right = input::Action::Button(0xC0200C, "Saturn 3D Control Pad", "Right");
+    inline constexpr auto DPad = input::Action::Axis2D(0xC0200D, "Saturn 3D Control Pad", "D-Pad axis");
+    inline constexpr auto AnalogStick = input::Action::Axis2D(0xC0200E, "Saturn 3D Control Pad", "Analog stick");
+    inline constexpr auto AnalogL = input::Action::Axis1D(0xC0200F, "Saturn 3D Control Pad", "Analog L");
+    inline constexpr auto AnalogR = input::Action::Axis1D(0xC02010, "Saturn 3D Control Pad", "Analog R");
+    inline constexpr auto SwitchMode = input::Action::Trigger(0xC02011, "Saturn 3D Control Pad", "Switch mode");
+
+} // namespace analog_pad
+
 } // namespace app::actions

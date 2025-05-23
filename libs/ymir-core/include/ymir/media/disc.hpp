@@ -17,6 +17,11 @@
 
 namespace ymir::media {
 
+struct Index {
+    uint32 startFrameAddress = 0;
+    uint32 endFrameAddress = 0;
+};
+
 struct Track {
     std::unique_ptr<IBinaryReader> binaryReader;
     uint32 index = 0;
@@ -28,6 +33,20 @@ struct Track {
 
     uint32 startFrameAddress = 0;
     uint32 endFrameAddress = 0;
+
+    std::vector<Index> indices;
+
+    uint8 FindIndex(uint32 frameAddress) const {
+        auto it = std::find_if(indices.begin(), indices.end(), [=](const Index &index) {
+            return frameAddress >= index.startFrameAddress && frameAddress <= index.endFrameAddress;
+        });
+
+        if (it == indices.end()) {
+            return 0xFF;
+        } else {
+            return std::distance(indices.begin(), it) + 1;
+        }
+    }
 
     void SetSectorSize(uint32 size) {
         sectorSize = size;

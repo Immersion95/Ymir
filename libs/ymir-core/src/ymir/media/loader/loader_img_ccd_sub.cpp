@@ -284,6 +284,7 @@ bool Load(std::filesystem::path ccdPath, Disc &disc, bool preloadToRAM) {
         for (int j = 0; j < session.numTracks; j++) {
             const uint32 trackNum = firstTrackNum + j;
             auto &track = session.tracks[trackNum - 1];
+            auto &index = track.indices.emplace_back();
             auto &point = ccdSession.tocEntries[trackNum];
             if (point.point != trackNum) {
                 // fmt::println("IMG/CCD/SUB: Missing track {} information for session {}", trackNum, i);
@@ -295,13 +296,16 @@ bool Load(std::filesystem::path ccdPath, Disc &disc, bool preloadToRAM) {
             track.interleavedSubchannel = false;
 
             track.startFrameAddress = TimestampToFrameAddress(point.min, point.sec, point.frame);
+            index.startFrameAddress = track.startFrameAddress;
 
             // Finish previous track
             if (j > 0) {
                 const auto &prevPoint = ccdSession.tocEntries[trackNum - 1];
                 auto &prevTrack = session.tracks[trackNum - 2];
+                auto &prevIndex = prevTrack.indices.back();
 
                 prevTrack.endFrameAddress = track.startFrameAddress - 1;
+                prevIndex.endFrameAddress = prevTrack.endFrameAddress;
                 uintmax_t fileOffset = static_cast<uintmax_t>(prevPoint.lba) * prevTrack.sectorSize;
                 uintmax_t fileSize =
                     (prevTrack.endFrameAddress - prevTrack.startFrameAddress + 1) * prevTrack.sectorSize;
@@ -318,8 +322,10 @@ bool Load(std::filesystem::path ccdPath, Disc &disc, bool preloadToRAM) {
         // Finish last track
         const auto &lastPoint = ccdSession.tocEntries[lastTrackNum];
         auto &lastTrack = session.tracks[lastTrackNum - 1];
+        auto &lastIndex = lastTrack.indices.back();
 
         lastTrack.endFrameAddress = session.endFrameAddress;
+        lastIndex.endFrameAddress = lastTrack.endFrameAddress;
         uintmax_t fileOffset = static_cast<uintmax_t>(lastPoint.lba) * lastTrack.sectorSize;
         uintmax_t fileSize = (lastTrack.endFrameAddress - lastTrack.startFrameAddress + 1) * lastTrack.sectorSize;
 

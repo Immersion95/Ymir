@@ -67,6 +67,10 @@ bool Load(std::filesystem::path isoPath, Disc &disc, bool preloadToRAM) {
     track.startFrameAddress = session.startFrameAddress + 150;
     track.endFrameAddress = session.endFrameAddress;
 
+    auto &index = track.indices.emplace_back();
+    index.startFrameAddress = track.startFrameAddress;
+    index.endFrameAddress = track.endFrameAddress;
+
     std::error_code err{};
     if (preloadToRAM) {
         track.binaryReader = std::make_unique<MemoryBinaryReader>(isoPath, err);

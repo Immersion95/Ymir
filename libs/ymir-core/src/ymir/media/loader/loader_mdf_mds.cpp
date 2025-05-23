@@ -210,6 +210,7 @@ bool Load(std::filesystem::path mdsPath, Disc &disc, bool preloadToRAM) {
 
             if (trackData.trackNum <= 99) {
                 auto &track = session.tracks[trackIndex];
+                auto &index = track.indices.emplace_back();
                 track.controlADR = (trackData.controlADR << 4u) | (trackData.controlADR >> 4u);
                 if (track.controlADR == 0x01 && trackData.sectorSize != 2352) {
                     /*fmt::println("MDF/MDS: Session {} audio track {:3d} has invalid sector size: {}",
@@ -219,6 +220,7 @@ bool Load(std::filesystem::path mdsPath, Disc &disc, bool preloadToRAM) {
                 track.SetSectorSize(trackData.sectorSize);
 
                 track.startFrameAddress = trackData.startSector + 150;
+                index.startFrameAddress = track.startFrameAddress;
                 track.interleavedSubchannel = trackData.subchannelMode != 0;
 
                 // Complete previous track
@@ -227,6 +229,8 @@ bool Load(std::filesystem::path mdsPath, Disc &disc, bool preloadToRAM) {
                     if (prevTrack.endFrameAddress < prevTrack.startFrameAddress) {
                         prevTrack.endFrameAddress = track.startFrameAddress - 1;
                     }
+                    auto &prevIndex = prevTrack.indices.back();
+                    prevIndex.endFrameAddress = prevTrack.endFrameAddress;
 
                     const uintmax_t viewOffset = trackStartOffsets[trackIndex - 1];
                     const uintmax_t viewSize = trackData.startOffset - viewOffset;
@@ -336,6 +340,8 @@ bool Load(std::filesystem::path mdsPath, Disc &disc, bool preloadToRAM) {
 
             lastTrack.binaryReader = std::make_unique<SharedSubviewBinaryReader>(file, viewOffset, viewSize);
         }
+        auto &lastIndex = lastTrack.indices.back();
+        lastIndex.endFrameAddress = lastTrack.endFrameAddress;
 
         // Finish session
         session.numTracks = sessionData.lastTrack - sessionData.firstTrack + 1;

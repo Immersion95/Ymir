@@ -36,22 +36,9 @@
 //
 // Sending input
 // -------------
-// This frontend attaches a Saturn Control Pad to both ports and redirects keyboard input to them with the following
-// default key mappings:
-//
-//          Port 1                        Port 2
-//     Q              E         KP7/Ins            KP9/PgUp
-//     W                           Up
-//   A   D  F/G/H   U I O        Lf  Rt  KPEnter  KP4 KP5 KP6
-//     S    /Enter  J K L          Dn             KP1 KP2 KP3
-//                            (arrow keys)
-//                            (or Home/Del/End/PgDn)
-//
-// Saturn Control Pad Layout
-//     L                 R
-//     Up
-// Left  Right  Start  X Y Z
-//    Down             A B C
+// This frontend allows attaching and detaching peripherals to both ports with fully customizable input binds,
+// supporting both keyboard and gamepad binds simultaneously. Multiple axis inputs are combined into one and clamped to
+// valid ranges.
 //
 //
 // Receiving video frames and audio samples
@@ -151,6 +138,7 @@ App::App()
     , m_slaveSH2WindowSet(m_context, false)
     , m_scuWindowSet(m_context)
     , m_vdpWindowSet(m_context)
+    , m_cdblockWindowSet(m_context)
     , m_debugOutputWindow(m_context)
     , m_settingsWindow(m_context)
     , m_periphBindsWindow(m_context)
@@ -175,15 +163,6 @@ int App::Run(const CommandLineOptions &options) {
     } else {
         m_context.profile.UsePortableProfilePath();
     }
-    if (!m_context.profile.CheckFolders()) {
-        std::error_code error{};
-        if (!m_context.profile.CreateFolders(error)) {
-            devlog::error<grp::base>("Could not create profile folders: {}", error.message());
-            return -1;
-        }
-    }
-
-    devlog::debug<grp::base>("Profile directory: {}", m_context.profile.GetPath(ProfilePath::Root));
 
     {
         auto &inputSettings = m_context.settings.input;
@@ -212,6 +191,16 @@ int App::Run(const CommandLineOptions &options) {
             devlog::warn<grp::base>("Failed to save settings: {}", result.string());
         }
     }};
+
+    if (!m_context.profile.CheckFolders()) {
+        std::error_code error{};
+        if (!m_context.profile.CreateFolders(error)) {
+            devlog::error<grp::base>("Could not create profile folders: {}", error.message());
+            return -1;
+        }
+    }
+
+    devlog::debug<grp::base>("Profile directory: {}", m_context.profile.GetPath(ProfilePath::Root));
 
     m_context.saturn.UsePreferredRegion();
 
@@ -1099,9 +1088,9 @@ void App::RunEmulator() {
 
     // Saturn Control Pad
     {
-        using Button = peripheral::ControlPadButton;
+        using Button = peripheral::Button;
 
-        auto registerControlPadButton = [&](input::Action action, Button button) {
+        auto registerButton = [&](input::Action action, Button button) {
             inputContext.SetButtonHandler(action, [=](void *context, const input::InputElement &, bool actuated) {
                 auto &input = *reinterpret_cast<SharedContext::ControlPadInput *>(context);
                 if (actuated) {
@@ -1112,7 +1101,7 @@ void App::RunEmulator() {
             });
         };
 
-        auto registerControlPadDPadButton = [&](input::Action action, float x, float y) {
+        auto registerDPadButton = [&](input::Action action, float x, float y) {
             inputContext.SetButtonHandler(
                 action, [=, this](void *context, const input::InputElement &element, bool actuated) {
                     auto &input = *reinterpret_cast<SharedContext::ControlPadInput *>(context);
@@ -1124,35 +1113,139 @@ void App::RunEmulator() {
                         dpadInput.x = 0;
                         dpadInput.y = 0.0f;
                     }
-                    input.UpdateDPadInput(m_context.settings.input.gamepad.analogToDigitalSensitivity);
+                    input.UpdateDPad(m_context.settings.input.gamepad.analogToDigitalSensitivity);
                 });
         };
 
-        auto registerControlPadDPad2DAxis = [&](input::Action action) {
+        auto registerDPad2DAxis = [&](input::Action action) {
             inputContext.SetAxis2DHandler(
                 action, [this](void *context, const input::InputElement &element, float x, float y) {
                     auto &input = *reinterpret_cast<SharedContext::ControlPadInput *>(context);
                     auto &dpadInput = input.dpad2DInputs[element];
                     dpadInput.x = x;
                     dpadInput.y = y;
-                    input.UpdateDPadInput(m_context.settings.input.gamepad.analogToDigitalSensitivity);
+                    input.UpdateDPad(m_context.settings.input.gamepad.analogToDigitalSensitivity);
                 });
         };
 
-        registerControlPadButton(actions::control_pad::A, Button::A);
-        registerControlPadButton(actions::control_pad::B, Button::B);
-        registerControlPadButton(actions::control_pad::C, Button::C);
-        registerControlPadButton(actions::control_pad::X, Button::X);
-        registerControlPadButton(actions::control_pad::Y, Button::Y);
-        registerControlPadButton(actions::control_pad::Z, Button::Z);
-        registerControlPadButton(actions::control_pad::Start, Button::Start);
-        registerControlPadButton(actions::control_pad::L, Button::L);
-        registerControlPadButton(actions::control_pad::R, Button::R);
-        registerControlPadDPadButton(actions::control_pad::Up, 0.0f, -1.0f);
-        registerControlPadDPadButton(actions::control_pad::Down, 0.0f, +1.0f);
-        registerControlPadDPadButton(actions::control_pad::Left, -1.0f, 0.0f);
-        registerControlPadDPadButton(actions::control_pad::Right, +1.0f, 0.0f);
-        registerControlPadDPad2DAxis(actions::control_pad::DPad);
+        registerButton(actions::control_pad::A, Button::A);
+        registerButton(actions::control_pad::B, Button::B);
+        registerButton(actions::control_pad::C, Button::C);
+        registerButton(actions::control_pad::X, Button::X);
+        registerButton(actions::control_pad::Y, Button::Y);
+        registerButton(actions::control_pad::Z, Button::Z);
+        registerButton(actions::control_pad::Start, Button::Start);
+        registerButton(actions::control_pad::L, Button::L);
+        registerButton(actions::control_pad::R, Button::R);
+        registerDPadButton(actions::control_pad::Up, 0.0f, -1.0f);
+        registerDPadButton(actions::control_pad::Down, 0.0f, +1.0f);
+        registerDPadButton(actions::control_pad::Left, -1.0f, 0.0f);
+        registerDPadButton(actions::control_pad::Right, +1.0f, 0.0f);
+        registerDPad2DAxis(actions::control_pad::DPad);
+    }
+
+    // Saturn 3D Control Pad
+    {
+        using Button = peripheral::Button;
+
+        auto registerButton = [&](input::Action action, Button button) {
+            inputContext.SetButtonHandler(action, [=](void *context, const input::InputElement &, bool actuated) {
+                auto &input = *reinterpret_cast<SharedContext::AnalogPadInput *>(context);
+                if (actuated) {
+                    input.buttons &= ~button;
+                } else {
+                    input.buttons |= button;
+                }
+            });
+        };
+
+        auto registerDPadButton = [&](input::Action action, float x, float y) {
+            inputContext.SetButtonHandler(
+                action, [=, this](void *context, const input::InputElement &element, bool actuated) {
+                    auto &input = *reinterpret_cast<SharedContext::AnalogPadInput *>(context);
+                    auto &dpadInput = input.dpad2DInputs[element];
+                    if (actuated) {
+                        dpadInput.x = x;
+                        dpadInput.y = y;
+                    } else {
+                        dpadInput.x = 0;
+                        dpadInput.y = 0.0f;
+                    }
+                    input.UpdateDPad(m_context.settings.input.gamepad.analogToDigitalSensitivity);
+                });
+        };
+
+        auto registerDPad2DAxis = [&](input::Action action) {
+            inputContext.SetAxis2DHandler(
+                action, [this](void *context, const input::InputElement &element, float x, float y) {
+                    auto &input = *reinterpret_cast<SharedContext::AnalogPadInput *>(context);
+                    auto &dpadInput = input.dpad2DInputs[element];
+                    dpadInput.x = x;
+                    dpadInput.y = y;
+                    input.UpdateDPad(m_context.settings.input.gamepad.analogToDigitalSensitivity);
+                });
+        };
+
+        auto registerAnalogStick = [&](input::Action action) {
+            inputContext.SetAxis2DHandler(action,
+                                          [this](void *context, const input::InputElement &element, float x, float y) {
+                                              auto &input = *reinterpret_cast<SharedContext::AnalogPadInput *>(context);
+                                              auto &analogInput = input.analogStickInputs[element];
+                                              analogInput.x = x;
+                                              analogInput.y = y;
+                                              input.UpdateAnalogStick();
+                                          });
+        };
+
+        auto registerDigitalTrigger = [&](input::Action action, bool which /*false=L, true=R*/) {
+            inputContext.SetButtonHandler(action,
+                                          [=, this](void *context, const input::InputElement &element, bool actuated) {
+                                              auto &input = *reinterpret_cast<SharedContext::AnalogPadInput *>(context);
+                                              auto &map = which ? input.analogRInputs : input.analogLInputs;
+                                              if (actuated) {
+                                                  map[element] = 1.0f;
+                                              } else {
+                                                  map[element] = 0.0f;
+                                              }
+                                              input.UpdateAnalogTriggers();
+                                          });
+        };
+
+        auto registerAnalogTrigger = [&](input::Action action, bool which /*false=L, true=R*/) {
+            inputContext.SetAxis1DHandler(
+                action, [this, which](void *context, const input::InputElement &element, float value) {
+                    auto &input = *reinterpret_cast<SharedContext::AnalogPadInput *>(context);
+                    auto &map = which ? input.analogRInputs : input.analogLInputs;
+                    map[element] = value;
+                    input.UpdateAnalogTriggers();
+                });
+        };
+
+        auto registerModeSwitch = [&](input::Action action) {
+            inputContext.SetTriggerHandler(action, [this](void *context, const input::InputElement &element) {
+                auto &input = *reinterpret_cast<SharedContext::AnalogPadInput *>(context);
+                input.analogMode ^= true;
+            });
+        };
+
+        registerButton(actions::analog_pad::A, Button::A);
+        registerButton(actions::analog_pad::B, Button::B);
+        registerButton(actions::analog_pad::C, Button::C);
+        registerButton(actions::analog_pad::X, Button::X);
+        registerButton(actions::analog_pad::Y, Button::Y);
+        registerButton(actions::analog_pad::Z, Button::Z);
+        registerButton(actions::analog_pad::Start, Button::Start);
+        registerDigitalTrigger(actions::analog_pad::L, false);
+        registerDigitalTrigger(actions::analog_pad::R, true);
+        registerDPadButton(actions::analog_pad::Up, 0.0f, -1.0f);
+        registerDPadButton(actions::analog_pad::Down, 0.0f, +1.0f);
+        registerDPadButton(actions::analog_pad::Left, -1.0f, 0.0f);
+        registerDPadButton(actions::analog_pad::Right, +1.0f, 0.0f);
+        registerDPad2DAxis(actions::analog_pad::DPad);
+        registerAnalogStick(actions::analog_pad::AnalogStick);
+        registerAnalogTrigger(actions::analog_pad::AnalogL, false);
+        registerAnalogTrigger(actions::analog_pad::AnalogR, true);
+        registerModeSwitch(actions::analog_pad::SwitchMode);
     }
 
     RebindInputs();
@@ -1865,6 +1958,12 @@ void App::RunEmulator() {
                         ImGui::Unindent();
                         ImGui::EndMenu();
                     }
+
+                    if (ImGui::BeginMenu("CD Block")) {
+                        ImGui::MenuItem("Command trace", nullptr, &m_cdblockWindowSet.cmdTrace.Open);
+                        ImGui::EndMenu();
+                    }
+
                     ImGui::MenuItem("Debug output", nullptr, &m_debugOutputWindow.Open);
                     ImGui::EndMenu();
                 }
@@ -2221,11 +2320,17 @@ void App::EmulatorThread() {
                     m_context.saturn.OpenTray();
                 }
                 break;
-            case LoadDisc:
+            case LoadDisc: //
+            {
                 // LoadDiscImage locks the disc mutex
                 LoadDiscImage(std::get<std::filesystem::path>(evt.value));
                 LoadSaveStates();
+                auto iplLoadResult = LoadIPLROM();
+                if (!iplLoadResult.succeeded) {
+                    OpenSimpleErrorModal(fmt::format("Could not load IPL ROM: {}", iplLoadResult.errorMessage));
+                }
                 break;
+            }
             case EjectDisc: //
             {
                 std::unique_lock lock{m_context.locks.disc};
@@ -2459,6 +2564,18 @@ void App::ReadPeripheral(ymir::peripheral::PeripheralReport &report) {
     case ymir::peripheral::PeripheralType::ControlPad:
         report.report.controlPad.buttons = m_context.controlPadInputs[port - 1].buttons;
         break;
+    case ymir::peripheral::PeripheralType::AnalogPad: //
+    {
+        auto &analogReport = report.report.analogPad;
+        const auto &inputs = m_context.analogPadInputs[port - 1];
+        analogReport.buttons = inputs.buttons;
+        analogReport.analog = inputs.analogMode;
+        analogReport.x = std::clamp(inputs.x * 128.0f + 128.0f, 0.0f, 255.0f);
+        analogReport.y = std::clamp(inputs.y * 128.0f + 128.0f, 0.0f, 255.0f);
+        analogReport.l = inputs.l * 255.0f;
+        analogReport.r = inputs.r * 255.0f;
+        break;
+    }
     default: break;
     }
 }
@@ -2927,6 +3044,7 @@ void App::DrawWindows() {
     m_slaveSH2WindowSet.DisplayAll();
     m_scuWindowSet.DisplayAll();
     m_vdpWindowSet.DisplayAll();
+    m_cdblockWindowSet.DisplayAll();
 
     m_debugOutputWindow.Display();
 

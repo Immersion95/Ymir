@@ -178,7 +178,7 @@ struct alignas(128) BGParams {
     bool enableTransparency;
 
     // Whether the background uses cells (false) or a bitmap (true).
-    // Derived CHCTLA/CHCTLB.xxBMEN
+    // Derived from CHCTLA/CHCTLB.xxBMEN
     bool bitmap;
 
     // Enables LNCL screen insertion if this BG is the topmost layer.
@@ -954,90 +954,52 @@ union RegVRSIZE {
 };
 
 // 180010   CYCA0L  VRAM Cycle Pattern A0 Lower
-//
-//   bits   r/w  code          description
-//  15-12     W  VCP0A0(3-0)   VRAM-A0 (or VRAM-A) Timing for T0
-//   11-8     W  VCP1A0(3-0)   VRAM-A0 (or VRAM-A) Timing for T1
-//    7-4     W  VCP2A0(3-0)   VRAM-A0 (or VRAM-A) Timing for T2
-//    3-0     W  VCP3A0(3-0)   VRAM-A0 (or VRAM-A) Timing for T3
-//
 // 180012   CYCA0U  VRAM Cycle Pattern A0 Upper
-//
-//   bits   r/w  code          description
-//  15-12     W  VCP4A0(3-0)   VRAM-A0 (or VRAM-A) Timing for T4
-//   11-8     W  VCP5A0(3-0)   VRAM-A0 (or VRAM-A) Timing for T5
-//    7-4     W  VCP6A0(3-0)   VRAM-A0 (or VRAM-A) Timing for T6
-//    3-0     W  VCP7A0(3-0)   VRAM-A0 (or VRAM-A) Timing for T7
-//
 // 180014   CYCA1L  VRAM Cycle Pattern A1 Lower
-//
-//   bits   r/w  code          description
-//  15-12     W  VCP0A1(3-0)   VRAM-A1 Timing for T0
-//   11-8     W  VCP1A1(3-0)   VRAM-A1 Timing for T1
-//    7-4     W  VCP2A1(3-0)   VRAM-A1 Timing for T2
-//    3-0     W  VCP3A1(3-0)   VRAM-A1 Timing for T3
-//
 // 180016   CYCA1U  VRAM Cycle Pattern A1 Upper
-//
-//   bits   r/w  code          description
-//  15-12     W  VCP4A1(3-0)   VRAM-A1 Timing for T4
-//   11-8     W  VCP5A1(3-0)   VRAM-A1 Timing for T5
-//    7-4     W  VCP6A1(3-0)   VRAM-A1 Timing for T6
-//    3-0     W  VCP7A1(3-0)   VRAM-A1 Timing for T7
-//
 // 180018   CYCB0L  VRAM Cycle Pattern B0 Lower
-//
-//   bits   r/w  code          description
-//  15-12     W  VCP0B0(3-0)   VRAM-B0 (or VRAM-B) Timing for T0
-//   11-8     W  VCP1B0(3-0)   VRAM-B0 (or VRAM-B) Timing for T1
-//    7-4     W  VCP2B0(3-0)   VRAM-B0 (or VRAM-B) Timing for T2
-//    3-0     W  VCP3B0(3-0)   VRAM-B0 (or VRAM-B) Timing for T3
-//
 // 18001A   CYCB0U  VRAM Cycle Pattern B0 Upper
-//
-//   bits   r/w  code          description
-//  15-12     W  VCP4B0(3-0)   VRAM-B0 (or VRAM-B) Timing for T4
-//   11-8     W  VCP5B0(3-0)   VRAM-B0 (or VRAM-B) Timing for T5
-//    7-4     W  VCP6B0(3-0)   VRAM-B0 (or VRAM-B) Timing for T6
-//    3-0     W  VCP7B0(3-0)   VRAM-B0 (or VRAM-B) Timing for T7
-//
 // 18001C   CYCB1L  VRAM Cycle Pattern B1 Lower
-//
-//   bits   r/w  code          description
-//  15-12     W  VCP0B1(3-0)   VRAM-B1 Timing for T0
-//   11-8     W  VCP1B1(3-0)   VRAM-B1 Timing for T1
-//    7-4     W  VCP2B1(3-0)   VRAM-B1 Timing for T2
-//    3-0     W  VCP3B1(3-0)   VRAM-B1 Timing for T3
-//
 // 18001E   CYCB1U  VRAM Cycle Pattern B1 Upper
-//
-//   bits   r/w  code          description
-//  15-12     W  VCP4B1(3-0)   VRAM-B1 Timing for T4
-//   11-8     W  VCP5B1(3-0)   VRAM-B1 Timing for T5
-//    7-4     W  VCP6B1(3-0)   VRAM-B1 Timing for T6
-//    3-0     W  VCP7B1(3-0)   VRAM-B1 Timing for T7
-union RegCYC {
-    uint32 u32;
-    struct {
-        union {
-            uint16 u16;
-            struct {
-                uint16 VCP3n : 4;
-                uint16 VCP2n : 4;
-                uint16 VCP1n : 4;
-                uint16 VCP0n : 4;
-            };
-        } L;
-        union {
-            uint16 u16;
-            struct {
-                uint16 VCP7n : 4;
-                uint16 VCP6n : 4;
-                uint16 VCP5n : 4;
-                uint16 VCP4n : 4;
-            };
-        } U;
+struct CyclePatterns {
+    enum Type {
+        PatNameNBG0,
+        PatNameNBG1,
+        PatNameNBG2,
+        PatNameNBG3,
+        CharPatNBG0,
+        CharPatNBG1,
+        CharPatNBG2,
+        CharPatNBG3,
+        _rsvd8,
+        _rsvd9,
+        _rsvdA,
+        _rsvdB,
+        VCellScrollNBG0,
+        VCellScrollNBG1,
+        CPU,
+        NoAccess
     };
+
+    CyclePatterns() {
+        Reset();
+    }
+
+    void Reset() {
+        for (auto &bank : timings) {
+            bank.fill(Type::PatNameNBG0);
+        }
+        dirty = true;
+    }
+
+    // [0] VRAM bank A0 / A  (00000..1FFFF / 00000..3FFFF)
+    // [1] VRAM bank A1      (20000..3FFFF)
+    // [2] VRAM bank B0 / B  (40000..5FFFF / 40000..7FFFF)
+    // [3] VRAM bank B1      (60000..7FFFF)
+    // [n][0..7] Access type per timing slot (T0-T7)
+    alignas(16) std::array<std::array<Type, 8>, 4> timings;
+
+    bool dirty;
 };
 
 // 180098   ZMCTL   Reduction Enable

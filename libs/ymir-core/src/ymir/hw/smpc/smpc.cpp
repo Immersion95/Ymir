@@ -280,7 +280,7 @@ uint8 SMPC::Read(uint32 address) {
     case 0x7F: return 0; // EXLE is write-only
     default:
         if constexpr (!peek) {
-            devlog::debug<grp::regs>("unhandled SMPC read from {:02X}", address);
+            devlog::debug<grp::regs>("Unhandled SMPC read from {:02X}", address);
         }
         return m_busValue;
     }
@@ -368,7 +368,7 @@ void SMPC::Write(uint32 address, uint8 value) {
     case 0x7F: WriteEXLE(value); break;
     default:
         if constexpr (!poke) {
-            devlog::debug<grp::regs>("unhandled SMPC write to {:02X} = {:02X}", address, value);
+            devlog::debug<grp::regs>("Unhandled SMPC write to {:02X} = {:02X}", address, value);
         }
         break;
     }
@@ -567,7 +567,11 @@ void SMPC::ProcessCommand() {
     case Command::INTBACK: INTBACK(); break;
     case Command::SETSMEM: SETSMEM(); break;
     case Command::SETTIME: SETTIME(); break;
-    default: devlog::debug<grp::base>("unhandled SMPC command {:02X}", static_cast<uint8>(COMREG)); break;
+    default:
+        devlog::debug<grp::base>("Unimplemented SMPC command {:02X}", static_cast<uint8>(COMREG));
+        SF = false; // done processing
+        OREG[31] = static_cast<uint8>(COMREG);
+        break;
     }
 }
 
@@ -742,8 +746,8 @@ void SMPC::TriggerOptimizedINTBACKRead() {
 void SMPC::ReadPeripherals() {
     m_intbackReportOffset = 0;
 
-    const size_t port1Len = m_port1.GetReportLength();
-    const size_t port2Len = m_port2.GetReportLength();
+    const size_t port1Len = m_port1.UpdateInputs();
+    const size_t port2Len = m_port2.UpdateInputs();
     m_intbackReport.resize(port1Len + port2Len);
     m_port1.Read(std::span<uint8>{m_intbackReport.begin(), port1Len});
     m_port2.Read(std::span<uint8>{m_intbackReport.begin() + port1Len, port2Len});

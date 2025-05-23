@@ -11,6 +11,8 @@
 #include <ymir/sys/bus.hpp>
 #include <ymir/sys/clocks.hpp>
 
+#include <ymir/debug/cdblock_tracer_base.hpp>
+
 #include <ymir/hw/cdblock/cdblock_internal_callbacks.hpp>
 #include <ymir/sys/system_internal_callbacks.hpp>
 
@@ -202,6 +204,7 @@ private:
 
     void SetupTOCTransfer();
     void SetupGetSectorTransfer(uint16 sectorPos, uint16 sectorCount, uint8 partitionNumber, bool del);
+    void SetupPutSectorTransfer(uint16 sectorCount, uint8 partitionNumber);
     uint32 SetupFileInfoTransfer(uint32 fileID);
     bool SetupSubcodeTransfer(uint8 type);
     void EndTransfer();
@@ -413,6 +416,12 @@ public:
     // -------------------------------------------------------------------------
     // Debugger
 
+    // Attaches the specified tracer to this component.
+    // Pass nullptr to disable tracing.
+    void UseTracer(debug::ICDBlockTracer *tracer) {
+        m_tracer = tracer;
+    }
+
     class Probe {
     public:
         Probe(CDBlock &cdblock);
@@ -441,6 +450,7 @@ public:
 
 private:
     Probe m_probe{*this};
+    debug::ICDBlockTracer *m_tracer = nullptr;
 };
 
 } // namespace ymir::cdblock

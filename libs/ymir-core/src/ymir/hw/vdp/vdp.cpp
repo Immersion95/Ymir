@@ -764,6 +764,8 @@ void VDP::LoadState(const state::VDPState &state) {
     m_VDP2.WriteCOBG(state.regs2.COBG);
     m_VDP2.WriteCOBB(state.regs2.COBB);
 
+    m_VDP2.cyclePatterns.dirty = true;
+
     switch (state.HPhase) {
     default:
     case state::VDPState::HorizontalPhase::Active: m_HPhase = HorizontalPhase::Active; break;
@@ -2493,51 +2495,6 @@ void VDP::VDP2InitFrame() {
         VDP2InitNormalBG<1>();
         VDP2InitNormalBG<2>();
         VDP2InitNormalBG<3>();
-
-        // Translate VRAM access cycles for vertical cell scroll data into increment and offset for NBG0 and NBG1.
-        //
-        // Some games set up "illegal" access patterns which we have to honor. This is an approximation of the real
-        // thing, since this VDP emulator does not actually perform the accesses described by the CYCxn registers.
-
-        const bool useVertScrollNBG0 = m_VDP2.bgParams[1].verticalCellScrollEnable;
-        const bool useVertScrollNBG1 = m_VDP2.bgParams[2].verticalCellScrollEnable;
-
-        if (useVertScrollNBG0 || useVertScrollNBG1) {
-            m_vertCellScrollInc = 0;
-            uint32 accessOffset = 0;
-
-            // Check in which bank the vertical cell scroll table is located at
-            uint32 bank = m_VDP2.verticalCellScrollTableAddress >> 17;
-            if (bank < 2 && !m_VDP2.vramControl.partitionVRAMA) {
-                bank = 0;
-            } else if (!m_VDP2.vramControl.partitionVRAMB) {
-                bank = 2;
-            }
-
-            // Get the corresponding CYCxn register
-            const RegCYC cyc = [&] {
-                switch (bank) {
-                case 0: return m_VDP2.CYCA0;
-                case 1: return m_VDP2.CYCA1;
-                case 2: return m_VDP2.CYCB0;
-                case 3: return m_VDP2.CYCB1;
-                }
-                util::unreachable();
-            }();
-
-            for (auto access : {cyc.L.VCP0n, cyc.L.VCP1n, cyc.L.VCP2n, cyc.L.VCP3n, //
-                                cyc.U.VCP4n, cyc.U.VCP5n, cyc.U.VCP6n, cyc.U.VCP7n}) {
-                if (useVertScrollNBG0 && access == 0xC) {
-                    m_vertCellScrollInc += sizeof(uint32);
-                    m_normBGLayerStates[0].vertCellScrollOffset = accessOffset;
-                    accessOffset += sizeof(uint32);
-                } else if (useVertScrollNBG1 && access == 0xD) {
-                    m_vertCellScrollInc += sizeof(uint32);
-                    m_normBGLayerStates[1].vertCellScrollOffset = accessOffset;
-                    accessOffset += sizeof(uint32);
-                }
-            }
-        }
     }
 }
 
@@ -2626,15 +2583,22 @@ FORCE_INLINE void VDP::VDP2UpdateLineScreenScroll(uint32 y, const BGParams &bgPa
         return value;
     };
 
-    if (bgParams.lineScrollXEnable) {
-        bgState.fracScrollX = bit::extract<8, 26>(read());
+    const VDP2Regs &regs = VDP2GetRegs();
+    size_t count = 1;
+    if (regs.TVMD.LSMDn == InterlaceMode::DoubleDensity && (y > 0 || regs.TVSTAT.ODD)) {
+        ++count;
     }
-    if (bgParams.lineScrollYEnable) {
-        // TODO: check/optimize this
-        bgState.fracScrollY = bit::extract<8, 26>(read());
-    }
-    if (bgParams.lineZoomEnable) {
-        bgState.scrollIncH = bit::extract<8, 18>(read());
+    for (size_t i = 0; i < count; ++i) {
+        if (bgParams.lineScrollXEnable) {
+            bgState.fracScrollX = bit::extract<8, 26>(read());
+        }
+        if (bgParams.lineScrollYEnable) {
+            // TODO: check/optimize this
+            bgState.fracScrollY = bit::extract<8, 26>(read());
+        }
+        if (bgParams.lineZoomEnable) {
+            bgState.scrollIncH = bit::extract<8, 18>(read());
+        }
     }
     if (y > 0 && (y & ((1u << bgParams.lineScrollInterval) - 1)) == 0) {
         bgState.lineScrollTableAddress = address;
@@ -2762,8 +2726,8 @@ FORCE_INLINE void VDP::VDP2CalcRotationParameterTables(uint32 y) {
             }
 
             // Store screen coordinates
-            state.screenCoords[x].x = ((kx * scrX) >> 16ll) + Xp;
-            state.screenCoords[x].y = ((ky * scrY) >> 16ll) + Yp;
+            state.screenCoords[x].x() = ((kx * scrX) >> 16ll) + Xp;
+            state.screenCoords[x].y() = ((ky * scrY) >> 16ll) + Yp;
 
             // Increment screen coordinates and coefficient table address by Hcnt
             scrX += scrXIncH;
@@ -3019,11 +2983,69 @@ FORCE_INLINE void VDP::VDP2CalcWindowOr(uint32 y, const WindowSet<hasSpriteWindo
     }
 }
 
+FORCE_INLINE void VDP::VDP2CalcAccessCycles() {
+    VDP2Regs &regs2 = VDP2GetRegs();
+
+    if (!regs2.bgEnabled[5]) {
+        // Translate VRAM access cycles for vertical cell scroll data into increment and offset for NBG0 and NBG1
+        // and access flags for each VRAM bank for all NBGs.
+        //
+        // Some games set up "illegal" access patterns which we have to honor. This is an approximation of the real
+        // thing, since this VDP emulator does not actually perform the accesses described by the CYCxn registers.
+
+        if (regs2.cyclePatterns.dirty) [[unlikely]] {
+            regs2.cyclePatterns.dirty = false;
+
+            m_vertCellScrollInc = 0;
+            uint32 vcellAccessOffset = 0;
+
+            // Check in which bank the vertical cell scroll table is located at
+            uint32 vcellBank = regs2.verticalCellScrollTableAddress >> 17;
+            if (vcellBank < 2 && !regs2.vramControl.partitionVRAMA) {
+                vcellBank = 0;
+            } else if (!regs2.vramControl.partitionVRAMB) {
+                vcellBank = 2;
+            }
+
+            const bool useVertScrollNBG0 = regs2.bgParams[1].verticalCellScrollEnable;
+            const bool useVertScrollNBG1 = regs2.bgParams[2].verticalCellScrollEnable;
+
+            // Update cycle accesses
+            for (uint32 bank = 0; bank < 4; ++bank) {
+                for (auto access : regs2.cyclePatterns.timings[bank]) {
+                    switch (access) {
+                    case CyclePatterns::VCellScrollNBG0:
+                        if (useVertScrollNBG0 && bank == vcellBank) {
+                            m_vertCellScrollInc += sizeof(uint32);
+                            m_normBGLayerStates[0].vertCellScrollOffset = vcellAccessOffset;
+                            vcellAccessOffset += sizeof(uint32);
+                        }
+                        break;
+                    case CyclePatterns::VCellScrollNBG1:
+                        if (useVertScrollNBG1 && bank == vcellBank) {
+                            m_vertCellScrollInc += sizeof(uint32);
+                            m_normBGLayerStates[1].vertCellScrollOffset = vcellAccessOffset;
+                            vcellAccessOffset += sizeof(uint32);
+                        }
+                        break;
+                    default: break;
+                    }
+                }
+            }
+        }
+    }
+}
+
 void VDP::VDP2DrawLine(uint32 y) {
     devlog::trace<grp::vdp2_render>("Drawing line {}", y);
 
     const VDP1Regs &regs1 = VDP1GetRegs();
     const VDP2Regs &regs2 = VDP2GetRegs();
+
+    // If starting a new frame, compute access cycles
+    if (y == 0) {
+        VDP2CalcAccessCycles();
+    }
 
     using FnDrawLayer = void (VDP::*)(uint32 y);
 
@@ -3123,8 +3145,8 @@ NO_INLINE void VDP::VDP2DrawSpriteLayer(uint32 y) {
             if constexpr (rotate) {
                 const auto &rotParamState = m_rotParamStates[0];
                 const auto &screenCoord = rotParamState.screenCoords[x];
-                const sint32 sx = screenCoord.x >> 16;
-                const sint32 sy = screenCoord.y >> 16;
+                const sint32 sx = screenCoord.x() >> 16;
+                const sint32 sy = screenCoord.y() >> 16;
                 return sx + sy * regs1.fbSizeH;
             } else {
                 return x + y * regs1.fbSizeH;
@@ -3212,12 +3234,11 @@ FORCE_INLINE void VDP::VDP2DrawNormalBG(uint32 y, uint32 colorMode) {
         return arr;
     }();
 
-    const VDP2Regs &regs = VDP2GetRegs();
-
-    if (!regs.bgEnabled[bgIndex]) {
+    if (!m_layerStates[bgIndex + 2].enabled) {
         return;
     }
 
+    const VDP2Regs &regs = VDP2GetRegs();
     const BGParams &bgParams = regs.bgParams[bgIndex + 1];
     LayerState &layerState = m_layerStates[bgIndex + 2];
     NormBGLayerState &bgState = m_normBGLayerStates[bgIndex];
@@ -3240,9 +3261,11 @@ FORCE_INLINE void VDP::VDP2DrawNormalBG(uint32 y, uint32 colorMode) {
         (this->*fnDrawScroll[chm][fcc][cf][colorMode])(y, bgParams, layerState, bgState, windowState);
     }
 
-    bgState.mosaicCounterY++;
-    if (bgState.mosaicCounterY >= regs.mosaicV) {
-        bgState.mosaicCounterY = 0;
+    if (bgParams.mosaicEnable) {
+        bgState.mosaicCounterY++;
+        if (bgState.mosaicCounterY >= regs.mosaicV) {
+            bgState.mosaicCounterY = 0;
+        }
     }
 }
 
@@ -3291,12 +3314,11 @@ FORCE_INLINE void VDP::VDP2DrawRotationBG(uint32 y, uint32 colorMode) {
         return arr;
     }();
 
-    const VDP2Regs &regs = VDP2GetRegs();
-
-    if (!regs.bgEnabled[bgIndex + 4]) {
+    if (!m_layerStates[bgIndex].enabled) {
         return;
     }
 
+    const VDP2Regs &regs = VDP2GetRegs();
     const BGParams &bgParams = regs.bgParams[bgIndex];
     LayerState &layerState = m_layerStates[bgIndex + 1];
     const auto &windowState = m_bgWindows[bgIndex];
@@ -3684,7 +3706,8 @@ NO_INLINE void VDP::VDP2DrawNormalBitmapBG(uint32 y, const BGParams &bgParams, L
             const CoordU32 scrollCoord{scrollX, scrollY};
 
             // Plot pixel
-            layerState.pixels[x] = VDP2FetchBitmapPixel<colorFormat, colorMode>(bgParams, scrollCoord);
+            layerState.pixels[x] =
+                VDP2FetchBitmapPixel<colorFormat, colorMode>(bgParams, bgParams.bitmapBaseAddress, scrollCoord);
         }
 
         // Increment horizontal coordinate
@@ -3721,8 +3744,8 @@ NO_INLINE void VDP::VDP2DrawRotationScrollBG(uint32 y, const BGParams &bgParams,
             continue;
         }
 
-        const sint32 fracScrollX = rotParamState.screenCoords[x].x;
-        const sint32 fracScrollY = rotParamState.screenCoords[x].y;
+        const sint32 fracScrollX = rotParamState.screenCoords[x].x();
+        const sint32 fracScrollY = rotParamState.screenCoords[x].y();
 
         // Get integer scroll screen coordinates
         const uint32 scrollX = fracScrollX >> 16u;
@@ -3818,8 +3841,8 @@ NO_INLINE void VDP::VDP2DrawRotationBitmapBG(uint32 y, const BGParams &bgParams,
             continue;
         }
 
-        const sint32 fracScrollX = rotParamState.screenCoords[x].x;
-        const sint32 fracScrollY = rotParamState.screenCoords[x].y;
+        const sint32 fracScrollX = rotParamState.screenCoords[x].x();
+        const sint32 fracScrollY = rotParamState.screenCoords[x].y();
 
         // Get integer scroll screen coordinates
         const uint32 scrollX = fracScrollX >> 16u;
@@ -3836,7 +3859,7 @@ NO_INLINE void VDP::VDP2DrawRotationBitmapBG(uint32 y, const BGParams &bgParams,
             pixel.transparent = true;
         } else if ((scrollX < maxScrollX && scrollY < maxScrollY) || usingRepeat) {
             // Plot pixel
-            pixel = VDP2FetchBitmapPixel<colorFormat, colorMode>(bgParams, scrollCoord);
+            pixel = VDP2FetchBitmapPixel<colorFormat, colorMode>(bgParams, rotParams.bitmapBaseAddress, scrollCoord);
         } else {
             // Out of bounds and no repeat
             pixel.transparent = true;
@@ -4058,8 +4081,8 @@ FORCE_INLINE VDP::Pixel VDP::VDP2FetchScrollBGPixel(const BGParams &bgParams, st
     //
     // fourCellChar stores the character pattern size (1x1 when false, 2x2 when true).
     // twoWordChar determines if characters are one (false) or two (true) words long.
-    // extChar determines the length of the character data field in one word characters --
-    // when true, they're extended by two bits, taking over the two flip bits.
+    // extChar determines the length of the character data field in one word characters -- when true, they're extended
+    // by two bits, taking over the two flip bits.
     //
     //           Cell
     // +--+--+--+--+--+--+--+--+
@@ -4107,11 +4130,14 @@ FORCE_INLINE VDP::Pixel VDP::VDP2FetchScrollBGPixel(const BGParams &bgParams, st
     const uint32 planeX = (bit::extract<9, planeMSB>(scrollX) >> pageShiftH) & planeMask;
     const uint32 planeY = (bit::extract<9, planeMSB>(scrollY) >> pageShiftV) & planeMask;
     const uint32 plane = planeX + planeY * planeWidth;
+    const uint32 pageBaseAddress = pageBaseAddresses[plane];
+    const uint32 pageBank = (pageBaseAddress >> 17u) & 3u;
 
     // Determine page index from the scroll coordinates
     const uint32 pageX = bit::extract<9>(scrollX) & pageShiftH;
     const uint32 pageY = bit::extract<9>(scrollY) & pageShiftV;
     const uint32 page = pageX + pageY * 2u;
+    const uint32 pageOffset = page << kPageSizes[fourCellChar][twoWordChar];
 
     // Determine character pattern from the scroll coordinates
     const uint32 charPatX = bit::extract<3, 8>(scrollX) >> fourCellCharValue;
@@ -4129,8 +4155,6 @@ FORCE_INLINE VDP::Pixel VDP::VDP2FetchScrollBGPixel(const BGParams &bgParams, st
     const CoordU32 dotCoord{dotX, dotY};
 
     // Fetch character
-    const uint32 pageBaseAddress = pageBaseAddresses[plane];
-    const uint32 pageOffset = page << kPageSizes[fourCellChar][twoWordChar];
     const uint32 pageAddress = pageBaseAddress + pageOffset;
     constexpr bool largePalette = colorFormat != ColorFormat::Palette16;
     const Character ch =
@@ -4316,7 +4340,8 @@ FORCE_INLINE VDP::Pixel VDP::VDP2FetchCharacterPixel(const BGParams &bgParams, C
 }
 
 template <ColorFormat colorFormat, uint32 colorMode>
-FORCE_INLINE VDP::Pixel VDP::VDP2FetchBitmapPixel(const BGParams &bgParams, CoordU32 dotCoord) {
+FORCE_INLINE VDP::Pixel VDP::VDP2FetchBitmapPixel(const BGParams &bgParams, uint32 bitmapBaseAddress,
+                                                  CoordU32 dotCoord) {
     static_assert(static_cast<uint32>(colorFormat) <= 4, "Invalid xxCHCN value");
 
     Pixel pixel{};
@@ -4328,7 +4353,6 @@ FORCE_INLINE VDP::Pixel VDP::VDP2FetchBitmapPixel(const BGParams &bgParams, Coor
     dotY &= bgParams.bitmapSizeV - 1;
 
     // Bitmap addressing uses a fixed offset of 0x20000 bytes which is precalculated when MPOFN/MPOFR is written to
-    const uint32 bitmapBaseAddress = bgParams.bitmapBaseAddress;
     const uint32 dotOffset = dotX + dotY * bgParams.bitmapSizeH;
     const uint32 palNum = bgParams.supplBitmapPalNum;
 

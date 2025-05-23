@@ -21,10 +21,7 @@ struct VDP2Regs {
         VCNT = 0x0;
         vramControl.Reset();
         VRSIZE.u16 = 0x0;
-        CYCA0.u32 = 0x0;
-        CYCA1.u32 = 0x0;
-        CYCB0.u32 = 0x0;
-        CYCB1.u32 = 0x0;
+        cyclePatterns.Reset();
         ZMCTL.u16 = 0x0;
 
         bgEnabled.fill(false);
@@ -489,83 +486,190 @@ struct VDP2Regs {
     }
 
     // 180010   CYCA0L  VRAM Cycle Pattern A0 Lower
+    //
+    //   bits   r/w  code          description
+    //  15-12     W  VCP0A0(3-0)   VRAM-A0 (or VRAM-A) Timing for T0
+    //   11-8     W  VCP1A0(3-0)   VRAM-A0 (or VRAM-A) Timing for T1
+    //    7-4     W  VCP2A0(3-0)   VRAM-A0 (or VRAM-A) Timing for T2
+    //    3-0     W  VCP3A0(3-0)   VRAM-A0 (or VRAM-A) Timing for T3
+    //
     // 180012   CYCA0U  VRAM Cycle Pattern A0 Upper
-    RegCYC CYCA0;
+    //
+    //   bits   r/w  code          description
+    //  15-12     W  VCP4A0(3-0)   VRAM-A0 (or VRAM-A) Timing for T4
+    //   11-8     W  VCP5A0(3-0)   VRAM-A0 (or VRAM-A) Timing for T5
+    //    7-4     W  VCP6A0(3-0)   VRAM-A0 (or VRAM-A) Timing for T6
+    //    3-0     W  VCP7A0(3-0)   VRAM-A0 (or VRAM-A) Timing for T7
+    //
+    // 180014   CYCA1L  VRAM Cycle Pattern A1 Lower
+    //
+    //   bits   r/w  code          description
+    //  15-12     W  VCP0A1(3-0)   VRAM-A1 Timing for T0
+    //   11-8     W  VCP1A1(3-0)   VRAM-A1 Timing for T1
+    //    7-4     W  VCP2A1(3-0)   VRAM-A1 Timing for T2
+    //    3-0     W  VCP3A1(3-0)   VRAM-A1 Timing for T3
+    //
+    // 180016   CYCA1U  VRAM Cycle Pattern A1 Upper
+    //
+    //   bits   r/w  code          description
+    //  15-12     W  VCP4A1(3-0)   VRAM-A1 Timing for T4
+    //   11-8     W  VCP5A1(3-0)   VRAM-A1 Timing for T5
+    //    7-4     W  VCP6A1(3-0)   VRAM-A1 Timing for T6
+    //    3-0     W  VCP7A1(3-0)   VRAM-A1 Timing for T7
+    //
+    // 180018   CYCB0L  VRAM Cycle Pattern B0 Lower
+    //
+    //   bits   r/w  code          description
+    //  15-12     W  VCP0B0(3-0)   VRAM-B0 (or VRAM-B) Timing for T0
+    //   11-8     W  VCP1B0(3-0)   VRAM-B0 (or VRAM-B) Timing for T1
+    //    7-4     W  VCP2B0(3-0)   VRAM-B0 (or VRAM-B) Timing for T2
+    //    3-0     W  VCP3B0(3-0)   VRAM-B0 (or VRAM-B) Timing for T3
+    //
+    // 18001A   CYCB0U  VRAM Cycle Pattern B0 Upper
+    //
+    //   bits   r/w  code          description
+    //  15-12     W  VCP4B0(3-0)   VRAM-B0 (or VRAM-B) Timing for T4
+    //   11-8     W  VCP5B0(3-0)   VRAM-B0 (or VRAM-B) Timing for T5
+    //    7-4     W  VCP6B0(3-0)   VRAM-B0 (or VRAM-B) Timing for T6
+    //    3-0     W  VCP7B0(3-0)   VRAM-B0 (or VRAM-B) Timing for T7
+    //
+    // 18001C   CYCB1L  VRAM Cycle Pattern B1 Lower
+    //
+    //   bits   r/w  code          description
+    //  15-12     W  VCP0B1(3-0)   VRAM-B1 Timing for T0
+    //   11-8     W  VCP1B1(3-0)   VRAM-B1 Timing for T1
+    //    7-4     W  VCP2B1(3-0)   VRAM-B1 Timing for T2
+    //    3-0     W  VCP3B1(3-0)   VRAM-B1 Timing for T3
+    //
+    // 18001E   CYCB1U  VRAM Cycle Pattern B1 Upper
+    //
+    //   bits   r/w  code          description
+    //  15-12     W  VCP4B1(3-0)   VRAM-B1 Timing for T4
+    //   11-8     W  VCP5B1(3-0)   VRAM-B1 Timing for T5
+    //    7-4     W  VCP6B1(3-0)   VRAM-B1 Timing for T6
+    //    3-0     W  VCP7B1(3-0)   VRAM-B1 Timing for T7
+    //
+    // Timing values:
+    //   0000 (0): NBG0 pattern name
+    //   0001 (1): NBG1 pattern name
+    //   0010 (2): NBG2 pattern name
+    //   0011 (3): NBG3 pattern name
+    //   0100 (4): NBG0 character pattern
+    //   0101 (5): NBG1 character pattern
+    //   0110 (6): NBG2 character pattern
+    //   0111 (7): NBG3 character pattern
+    //   1000 (8): (prohibited)
+    //   1001 (9): (prohibited)
+    //   1010 (A): (prohibited)
+    //   1011 (B): (prohibited)
+    //   1100 (C): NBG0 vertical cell scroll table
+    //   1101 (D): NBG1 vertical cell scroll table
+    //   1110 (E): CPU read/write
+    //   1111 (F): No access
+    CyclePatterns cyclePatterns;
 
     FORCE_INLINE uint16 ReadCYCA0L() const {
-        return CYCA0.L.u16;
+        return (cyclePatterns.timings[0][0] << 12u) | (cyclePatterns.timings[0][1] << 8u) |
+               (cyclePatterns.timings[0][2] << 4u) | cyclePatterns.timings[0][3];
     }
 
     FORCE_INLINE uint16 ReadCYCA0U() const {
-        return CYCA0.U.u16;
+        return (cyclePatterns.timings[0][4] << 12u) | (cyclePatterns.timings[0][5] << 8u) |
+               (cyclePatterns.timings[0][6] << 4u) | cyclePatterns.timings[0][7];
     }
 
     FORCE_INLINE void WriteCYCA0L(uint16 value) {
-        CYCA0.L.u16 = value;
+        cyclePatterns.dirty |= ReadCYCA0L() != value;
+        cyclePatterns.timings[0][0] = static_cast<CyclePatterns::Type>(bit::extract<12, 15>(value));
+        cyclePatterns.timings[0][1] = static_cast<CyclePatterns::Type>(bit::extract<8, 11>(value));
+        cyclePatterns.timings[0][2] = static_cast<CyclePatterns::Type>(bit::extract<4, 7>(value));
+        cyclePatterns.timings[0][3] = static_cast<CyclePatterns::Type>(bit::extract<0, 3>(value));
     }
 
     FORCE_INLINE void WriteCYCA0U(uint16 value) {
-        CYCA0.U.u16 = value;
+        cyclePatterns.dirty |= ReadCYCA0U() != value;
+        cyclePatterns.timings[0][4] = static_cast<CyclePatterns::Type>(bit::extract<12, 15>(value));
+        cyclePatterns.timings[0][5] = static_cast<CyclePatterns::Type>(bit::extract<8, 11>(value));
+        cyclePatterns.timings[0][6] = static_cast<CyclePatterns::Type>(bit::extract<4, 7>(value));
+        cyclePatterns.timings[0][7] = static_cast<CyclePatterns::Type>(bit::extract<0, 3>(value));
     }
 
-    // 180014   CYCA1L  VRAM Cycle Pattern A1 Lower
-    // 180016   CYCA1U  VRAM Cycle Pattern A1 Upper
-    RegCYC CYCA1;
-
     FORCE_INLINE uint16 ReadCYCA1L() const {
-        return CYCA1.L.u16;
+        return (cyclePatterns.timings[1][0] << 12u) | (cyclePatterns.timings[1][1] << 8u) |
+               (cyclePatterns.timings[1][2] << 4u) | cyclePatterns.timings[1][3];
     }
 
     FORCE_INLINE uint16 ReadCYCA1U() const {
-        return CYCA1.U.u16;
+        return (cyclePatterns.timings[1][4] << 12u) | (cyclePatterns.timings[1][5] << 8u) |
+               (cyclePatterns.timings[1][6] << 4u) | cyclePatterns.timings[1][7];
     }
 
     FORCE_INLINE void WriteCYCA1L(uint16 value) {
-        CYCA1.L.u16 = value;
+        cyclePatterns.dirty |= ReadCYCA1L() != value;
+        cyclePatterns.timings[1][0] = static_cast<CyclePatterns::Type>(bit::extract<12, 15>(value));
+        cyclePatterns.timings[1][1] = static_cast<CyclePatterns::Type>(bit::extract<8, 11>(value));
+        cyclePatterns.timings[1][2] = static_cast<CyclePatterns::Type>(bit::extract<4, 7>(value));
+        cyclePatterns.timings[1][3] = static_cast<CyclePatterns::Type>(bit::extract<0, 3>(value));
     }
 
     FORCE_INLINE void WriteCYCA1U(uint16 value) {
-        CYCA1.U.u16 = value;
+        cyclePatterns.dirty |= ReadCYCA1U() != value;
+        cyclePatterns.timings[1][4] = static_cast<CyclePatterns::Type>(bit::extract<12, 15>(value));
+        cyclePatterns.timings[1][5] = static_cast<CyclePatterns::Type>(bit::extract<8, 11>(value));
+        cyclePatterns.timings[1][6] = static_cast<CyclePatterns::Type>(bit::extract<4, 7>(value));
+        cyclePatterns.timings[1][7] = static_cast<CyclePatterns::Type>(bit::extract<0, 3>(value));
     }
 
-    // 180018   CYCB0L  VRAM Cycle Pattern B0 Lower
-    // 18001A   CYCB0U  VRAM Cycle Pattern B0 Upper
-    RegCYC CYCB0;
-
     FORCE_INLINE uint16 ReadCYCB0L() const {
-        return CYCB0.L.u16;
+        return (cyclePatterns.timings[2][0] << 12u) | (cyclePatterns.timings[2][1] << 8u) |
+               (cyclePatterns.timings[2][2] << 4u) | cyclePatterns.timings[2][3];
     }
 
     FORCE_INLINE uint16 ReadCYCB0U() const {
-        return CYCB0.U.u16;
+        return (cyclePatterns.timings[2][4] << 12u) | (cyclePatterns.timings[2][5] << 8u) |
+               (cyclePatterns.timings[2][6] << 4u) | cyclePatterns.timings[2][7];
     }
 
     FORCE_INLINE void WriteCYCB0L(uint16 value) {
-        CYCB0.L.u16 = value;
+        cyclePatterns.dirty |= ReadCYCB0L() != value;
+        cyclePatterns.timings[2][0] = static_cast<CyclePatterns::Type>(bit::extract<12, 15>(value));
+        cyclePatterns.timings[2][1] = static_cast<CyclePatterns::Type>(bit::extract<8, 11>(value));
+        cyclePatterns.timings[2][2] = static_cast<CyclePatterns::Type>(bit::extract<4, 7>(value));
+        cyclePatterns.timings[2][3] = static_cast<CyclePatterns::Type>(bit::extract<0, 3>(value));
     }
 
     FORCE_INLINE void WriteCYCB0U(uint16 value) {
-        CYCB0.U.u16 = value;
+        cyclePatterns.dirty |= ReadCYCB0U() != value;
+        cyclePatterns.timings[2][4] = static_cast<CyclePatterns::Type>(bit::extract<12, 15>(value));
+        cyclePatterns.timings[2][5] = static_cast<CyclePatterns::Type>(bit::extract<8, 11>(value));
+        cyclePatterns.timings[2][6] = static_cast<CyclePatterns::Type>(bit::extract<4, 7>(value));
+        cyclePatterns.timings[2][7] = static_cast<CyclePatterns::Type>(bit::extract<0, 3>(value));
     }
 
-    // 18001C   CYCB1L  VRAM Cycle Pattern B1 Lower
-    // 18001E   CYCB1U  VRAM Cycle Pattern B1 Upper
-    RegCYC CYCB1;
-
     FORCE_INLINE uint16 ReadCYCB1L() const {
-        return CYCB1.L.u16;
+        return (cyclePatterns.timings[3][0] << 12u) | (cyclePatterns.timings[3][1] << 8u) |
+               (cyclePatterns.timings[3][2] << 4u) | cyclePatterns.timings[3][3];
     }
 
     FORCE_INLINE uint16 ReadCYCB1U() const {
-        return CYCB1.U.u16;
+        return (cyclePatterns.timings[3][4] << 12u) | (cyclePatterns.timings[3][5] << 8u) |
+               (cyclePatterns.timings[3][6] << 4u) | cyclePatterns.timings[3][7];
     }
 
     FORCE_INLINE void WriteCYCB1L(uint16 value) {
-        CYCB1.L.u16 = value;
+        cyclePatterns.dirty |= ReadCYCB1L() != value;
+        cyclePatterns.timings[3][0] = static_cast<CyclePatterns::Type>(bit::extract<12, 15>(value));
+        cyclePatterns.timings[3][1] = static_cast<CyclePatterns::Type>(bit::extract<8, 11>(value));
+        cyclePatterns.timings[3][2] = static_cast<CyclePatterns::Type>(bit::extract<4, 7>(value));
+        cyclePatterns.timings[3][3] = static_cast<CyclePatterns::Type>(bit::extract<0, 3>(value));
     }
 
     FORCE_INLINE void WriteCYCB1U(uint16 value) {
-        CYCB1.U.u16 = value;
+        cyclePatterns.dirty |= ReadCYCB1U() != value;
+        cyclePatterns.timings[3][4] = static_cast<CyclePatterns::Type>(bit::extract<12, 15>(value));
+        cyclePatterns.timings[3][5] = static_cast<CyclePatterns::Type>(bit::extract<8, 11>(value));
+        cyclePatterns.timings[3][6] = static_cast<CyclePatterns::Type>(bit::extract<4, 7>(value));
+        cyclePatterns.timings[3][7] = static_cast<CyclePatterns::Type>(bit::extract<0, 3>(value));
     }
 
     // 180020   BGON    Screen Display Enable

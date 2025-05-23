@@ -19,6 +19,8 @@ add_executable(ymir-sdl3
     src/app/shared_context.hpp
     src/app/stb_implementations.cpp
 
+    src/app/debug/cdblock_tracer.cpp
+    src/app/debug/cdblock_tracer.hpp
     src/app/debug/scu_tracer.cpp
     src/app/debug/scu_tracer.hpp
     src/app/debug/sh2_tracer.cpp
@@ -52,6 +54,8 @@ add_executable(ymir-sdl3
     src/app/ui/views/backup_memory_view.cpp
     src/app/ui/views/backup_memory_view.hpp
 
+    src/app/ui/views/debug/cdblock_cmd_trace_view.cpp
+    src/app/ui/views/debug/cdblock_cmd_trace_view.hpp
     src/app/ui/views/debug/debug_output_view.cpp
     src/app/ui/views/debug/debug_output_view.hpp
     src/app/ui/views/debug/scu_dma_registers_view.cpp
@@ -109,6 +113,8 @@ add_executable(ymir-sdl3
     src/app/ui/views/debug/vdp2_layers_enable_view.cpp
     src/app/ui/views/debug/vdp2_layers_enable_view.hpp
 
+    src/app/ui/views/settings/analog_pad_binds_view.cpp
+    src/app/ui/views/settings/analog_pad_binds_view.hpp
     src/app/ui/views/settings/audio_settings_view.cpp
     src/app/ui/views/settings/audio_settings_view.hpp
     src/app/ui/views/settings/cartridge_settings_view.cpp
@@ -160,6 +166,11 @@ add_executable(ymir-sdl3
     src/app/ui/windows/system_state_window.cpp
     src/app/ui/windows/system_state_window.hpp
 
+    src/app/ui/windows/debug/cdblock_cmd_trace_window.cpp
+    src/app/ui/windows/debug/cdblock_cmd_trace_window.hpp
+    src/app/ui/windows/debug/cdblock_window_base.cpp
+    src/app/ui/windows/debug/cdblock_window_base.hpp
+    src/app/ui/windows/debug/cdblock_window_set.hpp
     src/app/ui/windows/debug/debug_output_window.cpp
     src/app/ui/windows/debug/debug_output_window.hpp
     src/app/ui/windows/debug/memory_viewer_window.cpp

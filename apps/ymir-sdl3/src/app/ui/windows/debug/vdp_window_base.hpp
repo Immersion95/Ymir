@@ -4,8 +4,6 @@
 
 // #include <app/debug/vdp_tracer.hpp>
 
-#include <ymir/hw/vdp/vdp.hpp>
-
 namespace app::ui {
 
 class VDPWindowBase : public WindowBase {

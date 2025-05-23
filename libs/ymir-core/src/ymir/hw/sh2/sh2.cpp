@@ -298,6 +298,11 @@ FLATTEN uint64 SH2::Advance(uint64 cycles) {
             // TODO: choose between interpreter (cached or uncached) and JIT recompiler
             cyclesExecuted += InterpretNext<debug, enableCache>();
 
+            // If PC is in any of these places, something went horribly wrong
+            /*if ((PC & 1) || ((PC >> 29u) != 0b000 && (PC >> 29u) != 0b001 && (PC >> 29u) != 0b101)) {
+                __debugbreak();
+            }*/
+
             if constexpr (devlog::debug_enabled<grp::exec_dump>) {
                 // Dump stack trace on SYS_EXECDMP
                 if ((PC & 0x7FFFFFF) == config::sysExecDumpAddress) {
@@ -1563,7 +1568,7 @@ FORCE_INLINE void SH2::EnterException(uint8 vectorNumber) {
     R[15] -= 4;
     MemWriteLong<debug, enableCache>(R[15], SR.u32);
     R[15] -= 4;
-    MemWriteLong<debug, enableCache>(R[15], PC - 4);
+    MemWriteLong<debug, enableCache>(R[15], PC);
     PC = MemReadLong<enableCache>(VBR + (static_cast<uint32>(vectorNumber) << 2u));
 }
 
@@ -2851,14 +2856,14 @@ FORCE_INLINE void SH2::TRAPA(const DecodedArgs &args) {
     R[15] -= 4;
     MemWriteLong<debug, enableCache>(R[15], SR.u32);
     R[15] -= 4;
-    MemWriteLong<debug, enableCache>(R[15], PC - 2);
+    MemWriteLong<debug, enableCache>(R[15], PC + 2);
     PC = MemReadLong<enableCache>(VBR + args.dispImm);
 }
 
 template <bool debug, bool enableCache>
 FORCE_INLINE void SH2::RTE() {
     // rte
-    SetupDelaySlot(MemReadLong<enableCache>(R[15]) + 4);
+    SetupDelaySlot(MemReadLong<enableCache>(R[15]));
     PC += 2;
     R[15] += 4;
     SR.u32 = MemReadLong<enableCache>(R[15]) & 0x000003F3;

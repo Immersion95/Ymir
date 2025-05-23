@@ -1024,6 +1024,9 @@ private:
     void VDP2CalcWindowOr(uint32 y, const WindowSet<hasSpriteWindow> &windowSet,
                           const std::array<WindowParams, 2> &windowParams, std::array<bool, kMaxResH> &windowState);
 
+    // Computes the access cycles for NBGs and RBGs.
+    void VDP2CalcAccessCycles();
+
     // Draws the specified VDP2 scanline.
     //
     // y is the scanline to draw
@@ -1197,9 +1200,10 @@ private:
     // dotCoord specify the coordinates of the pixel within the bitmap.
     //
     // colorFormat is the color format for pixel data.
+    // bitmapBaseAddress is the base address of bitmap data.
     // colorMode is the CRAM color mode.
     template <ColorFormat colorFormat, uint32 colorMode>
-    Pixel VDP2FetchBitmapPixel(const BGParams &bgParams, CoordU32 dotCoord);
+    Pixel VDP2FetchBitmapPixel(const BGParams &bgParams, uint32 bitmapBaseAddress, CoordU32 dotCoord);
 
     // Fetches a color from CRAM using the current color mode specified by vramControl.colorRAMMode.
     //
