@@ -342,6 +342,9 @@ bool DisassembleSCSPDSP(Disassembler &disasm, std::string_view origin, const std
 
     auto fetcher =
         MakeFetcher<SCSPDSPOpcodeFetcher, CommandLineSCSPDSPOpcodeFetcher, StreamSCSPDSPOpcodeFetcher>(args, inputFile);
+    if (!fetcher) {
+        return false;
+    }
 
     bool running = true;
     const auto visitor = [&](auto &value) {

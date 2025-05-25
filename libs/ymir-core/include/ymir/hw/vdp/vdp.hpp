@@ -649,6 +649,8 @@ private:
 
             rendering = false;
 
+            erase = false;
+
             cycleCount = 0;
         }
 
@@ -669,6 +671,8 @@ private:
         sint32 localCoordY;
 
         bool rendering;
+
+        bool erase;
 
         uint64 cycleCount;
     } m_VDP1RenderContext;

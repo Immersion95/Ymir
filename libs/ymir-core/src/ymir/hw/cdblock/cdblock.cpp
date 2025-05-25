@@ -208,7 +208,6 @@ void CDBlock::OpenTray() {
         m_status.statusCode = kStatusCodeOpen;
         m_discAuthStatus = 0;
 
-        m_fs.Clear();
         SetInterrupt(kHIRQ_DCHG | kHIRQ_EFLS);
 
         devlog::info<grp::base>("Tray opened");
@@ -289,6 +288,7 @@ void CDBlock::SaveState(state::CDBlockState &state) const {
     case TransferType::GetThenDeleteSector:
         state.xferType = state::CDBlockState::TransferType::GetThenDeleteSector;
         break;
+    case TransferType::PutSector: state.xferType = state::CDBlockState::TransferType::PutSector; break;
     case TransferType::FileInfo: state.xferType = state::CDBlockState::TransferType::FileInfo; break;
     case TransferType::Subcode: state.xferType = state::CDBlockState::TransferType::Subcode; break;
     }
@@ -308,6 +308,11 @@ void CDBlock::SaveState(state::CDBlockState &state) const {
 
     state.xferExtraCount = m_xferExtraCount;
 
+    // Store partition buffers first, then scratch buffers.
+    // Since there are always 200 buffers (and one extra scratch buffer), we can use the free buffer count to determine
+    // both how many scratch buffers to write and where to begin writing them.
+
+    // Clear all buffers first
     for (auto &buffer : state.buffers) {
         buffer.data.fill(0);
         buffer.size = 0;
@@ -318,15 +323,26 @@ void CDBlock::SaveState(state::CDBlockState &state) const {
         buffer.codingInfo = 0;
         buffer.partitionIndex = 0xFF;
     }
-    state.scratchBuffer.data = m_scratchBuffer.data;
-    state.scratchBuffer.size = m_scratchBuffer.size;
-    state.scratchBuffer.frameAddress = m_scratchBuffer.frameAddress;
-    state.scratchBuffer.fileNum = m_scratchBuffer.subheader.fileNum;
-    state.scratchBuffer.chanNum = m_scratchBuffer.subheader.chanNum;
-    state.scratchBuffer.submode = m_scratchBuffer.subheader.submode;
-    state.scratchBuffer.codingInfo = m_scratchBuffer.subheader.codingInfo;
 
+    // Write partition buffers
     m_partitionManager.SaveState(state);
+
+    // Write scratch buffers after partition buffers
+    const uint32 basePos = kNumBuffers - m_partitionManager.GetFreeBufferCount();
+    uint32 pos = basePos;
+    while (pos < kNumBuffers + 1) {
+        auto &scratchBuffer = m_scratchBuffers[pos - basePos];
+        state.buffers[pos].data = scratchBuffer.data;
+        state.buffers[pos].size = scratchBuffer.size;
+        state.buffers[pos].frameAddress = scratchBuffer.frameAddress;
+        state.buffers[pos].fileNum = scratchBuffer.subheader.fileNum;
+        state.buffers[pos].chanNum = scratchBuffer.subheader.chanNum;
+        state.buffers[pos].submode = scratchBuffer.subheader.submode;
+        state.buffers[pos].codingInfo = scratchBuffer.subheader.codingInfo;
+        ++pos;
+    }
+
+    state.scratchBufferPutIndex = m_scratchBufferPutIndex;
 
     for (size_t i = 0; i < kNumFilters; i++) {
         state.filters[i].startFrameAddress = m_filters[i].startFrameAddress;
@@ -405,10 +421,12 @@ void CDBlock::LoadState(const state::CDBlockState &state) {
     m_mpegAuthStatus = state.mpegAuthStatus;
 
     switch (state.xferType) {
+    default: [[fallthrough]];
     case state::CDBlockState::TransferType::None: m_xferType = TransferType::None; break;
     case state::CDBlockState::TransferType::TOC: m_xferType = TransferType::TOC; break;
     case state::CDBlockState::TransferType::GetSector: m_xferType = TransferType::GetSector; break;
     case state::CDBlockState::TransferType::GetThenDeleteSector: m_xferType = TransferType::GetThenDeleteSector; break;
+    case state::CDBlockState::TransferType::PutSector: m_xferType = TransferType::PutSector; break;
     case state::CDBlockState::TransferType::FileInfo: m_xferType = TransferType::FileInfo; break;
     case state::CDBlockState::TransferType::Subcode: m_xferType = TransferType::Subcode; break;
     }
@@ -428,15 +446,23 @@ void CDBlock::LoadState(const state::CDBlockState &state) {
 
     m_xferExtraCount = state.xferExtraCount;
 
-    m_scratchBuffer.data = state.scratchBuffer.data;
-    m_scratchBuffer.size = state.scratchBuffer.size;
-    m_scratchBuffer.frameAddress = state.scratchBuffer.frameAddress;
-    m_scratchBuffer.subheader.fileNum = state.scratchBuffer.fileNum;
-    m_scratchBuffer.subheader.chanNum = state.scratchBuffer.chanNum;
-    m_scratchBuffer.subheader.submode = state.scratchBuffer.submode;
-    m_scratchBuffer.subheader.codingInfo = state.scratchBuffer.codingInfo;
-
+    // Read partition buffers followed by scratch buffers
     m_partitionManager.LoadState(state);
+    const uint32 basePos = kNumBuffers - m_partitionManager.GetFreeBufferCount();
+    uint32 pos = basePos;
+    while (pos < kNumBuffers + 1) {
+        auto &scratchBuffer = m_scratchBuffers[pos - basePos];
+        scratchBuffer.data = state.buffers[pos].data;
+        scratchBuffer.size = state.buffers[pos].size;
+        scratchBuffer.frameAddress = state.buffers[pos].frameAddress;
+        scratchBuffer.subheader.fileNum = state.buffers[pos].fileNum;
+        scratchBuffer.subheader.chanNum = state.buffers[pos].chanNum;
+        scratchBuffer.subheader.submode = state.buffers[pos].submode;
+        scratchBuffer.subheader.codingInfo = state.buffers[pos].codingInfo;
+        ++pos;
+    }
+
+    m_scratchBufferPutIndex = state.scratchBufferPutIndex;
 
     for (size_t i = 0; i < kNumFilters; i++) {
         m_filters[i].startFrameAddress = state.filters[i].startFrameAddress;
@@ -765,7 +791,15 @@ bool CDBlock::SetupFilePlayback(uint32 fileID, uint32 offset, uint8 filterNumber
     // Reject if the file ID is out of range
     const media::fs::FileInfo &fileInfo = m_fs.GetFileInfo(fileID);
     if (!fileInfo.IsValid()) {
-        devlog::debug<grp::play_init>("Invalid file ID; rejecting playback request");
+        devlog::debug<grp::play_init>("Invalid file ID {:X}; rejecting playback request", fileID);
+        return false;
+    }
+
+    // Reject if file ID points to a directory
+    // TODO: should this be rejected?
+    if (fileInfo.IsDirectory()) {
+        devlog::warn<grp::play_init>("Attempting to read a directory (file ID {:X}); rejecting playback request",
+                                     fileID);
         return false;
     }
 
@@ -801,8 +835,8 @@ bool CDBlock::SetupFilePlayback(uint32 fileID, uint32 offset, uint8 filterNumber
     m_status.track = trackIndex + 1;
     m_status.index = 1;
 
-    devlog::debug<grp::play_init>("Read file {}, offset {}, filter {}, frame addresses {:06X} to {:06X}", fileID,
-                                  offset, filterNumber, m_playStartPos, m_playEndPos);
+    devlog::debug<grp::play_init>("Read file {} (ID {}), offset {}, filter {}, frame addresses {:06X} to {:06X}",
+                                  fileInfo.name, fileID, offset, filterNumber, m_playStartPos, m_playEndPos);
     return true;
 }
 
@@ -874,7 +908,7 @@ void CDBlock::ProcessDriveStatePlay() {
             const media::Session &session = m_disc.sessions.back();
             const media::Track *track = session.FindTrack(frameAddress);
 
-            Buffer &buffer = m_scratchBuffer;
+            Buffer &buffer = m_scratchBuffers[0];
 
             // Sanity check: is the track valid?
             if (track != nullptr && track->ReadSector(frameAddress, buffer.data, m_getSectorLength)) [[likely]] {
@@ -1095,12 +1129,31 @@ void CDBlock::SetupGetSectorTransfer(uint16 sectorPos, uint16 sectorCount, uint8
 }
 
 void CDBlock::SetupPutSectorTransfer(uint16 sectorCount, uint8 partitionNumber) {
-    devlog::trace<grp::xfer>("Starting sector write transfer - {} sectors into buffer partition {}", sectorCount,
+    devlog::debug<grp::xfer>("Starting sector write transfer - {} sectors into buffer partition {}", sectorCount,
                              partitionNumber);
 
-    // TODO: setup write transfer parameters
+    m_xferPartition = partitionNumber;
 
-    devlog::debug<grp::xfer>("Put sector transfer is unimplemented");
+    m_xferType = TransferType::PutSector;
+    m_xferPos = 0;
+    m_xferBufferPos = 0;
+    m_xferLength = m_putSectorLength / sizeof(uint16) * sectorCount;
+    m_xferCount = 0;
+    m_xferExtraCount = 0;
+
+    m_scratchBufferPutIndex = 0;
+
+    // Prepare sectors in scratch area
+    for (uint32 i = 0; i < sectorCount; ++i) {
+        auto &buffer = m_scratchBuffers[i];
+        buffer.frameAddress = 0;
+        buffer.size = m_putSectorLength;
+        buffer.frameAddress = 0;
+        buffer.subheader.fileNum = 0;
+        buffer.subheader.chanNum = 0;
+        buffer.subheader.submode = 0;
+        buffer.subheader.codingInfo = 0;
+    }
 }
 
 uint32 CDBlock::SetupFileInfoTransfer(uint32 fileID) {
@@ -1214,41 +1267,6 @@ bool CDBlock::SetupSubcodeTransfer(uint8 type) {
     return false;
 }
 
-void CDBlock::EndTransfer() {
-    if (m_xferType == TransferType::None) {
-        return;
-    }
-
-    devlog::trace<grp::xfer>("Ending transfer at {} of {} words", m_xferPos, m_xferLength);
-    if (m_xferExtraCount > 0) {
-        devlog::debug<grp::xfer>("{} unexpected transfer attempts", m_xferExtraCount);
-    }
-
-    // Trigger EHST HIRQ if ending certain sector transfers
-    switch (m_xferType) {
-    case TransferType::GetSector:
-    case TransferType::GetThenDeleteSector: //
-    {
-        if (m_xferType == TransferType::GetThenDeleteSector) {
-            if (m_xferBufferPos < m_getSectorLength / sizeof(uint16)) {
-                // Delete sector if not fully read
-                m_partitionManager.RemoveTail(m_xferPartition, m_xferSectorPos);
-                devlog::trace<grp::xfer>("Sector freed");
-            }
-        }
-        SetInterrupt(kHIRQ_EHST);
-        break;
-    }
-    default: break;
-    }
-
-    m_xferType = TransferType::None;
-    m_xferPos = 0;
-    m_xferBufferPos = 0;
-    m_xferLength = 0;
-    m_xferCount = 0xFFFFFF;
-}
-
 void CDBlock::ReadSector() {
     const Buffer *buffer = m_partitionManager.GetTail(m_xferPartition, m_xferSectorPos);
     if (buffer != nullptr) {
@@ -1296,7 +1314,7 @@ uint16 CDBlock::DoReadTransfer() {
     case TransferType::FileInfo: break;
     case TransferType::Subcode: break;
 
-    default: m_xferExtraCount++; return 0; // write-only or no active transfer, or unimplemented read transfer
+    default: ++m_xferExtraCount; return 0; // no active transfer, write-only transfer or unimplemented read transfer
     }
 
     AdvanceTransfer();
@@ -1305,11 +1323,23 @@ uint16 CDBlock::DoReadTransfer() {
 }
 
 void CDBlock::DoWriteTransfer(uint16 value) {
-    // TODO: implement write transfers
-    /*switch (m_xferType) {
-    }*/
+    switch (m_xferType) {
+    case TransferType::PutSector:
+        if (m_scratchBufferPutIndex < m_scratchBuffers.size()) {
+            auto &buffer = m_scratchBuffers[m_scratchBufferPutIndex];
+            if (m_xferBufferPos < m_putSectorLength) {
+                util::WriteBE<uint16>(&buffer.data[m_xferBufferPos], value);
+            }
+        }
+        m_xferBufferPos += sizeof(uint16);
+        if (m_xferBufferPos >= m_putSectorLength) {
+            ++m_scratchBufferPutIndex;
+            m_xferBufferPos = 0;
+        }
+        break;
 
-    // TODO: raise kHIRQ_EHST if not enough buffer space available
+    default: ++m_xferExtraCount; break; // no active transfer, read-only transfer or unimplemented write transfer
+    }
 
     m_xferExtraCount++;
 
@@ -1321,10 +1351,69 @@ void CDBlock::AdvanceTransfer() {
     m_xferCount++;
     if (m_xferPos >= m_xferLength) {
         devlog::trace<grp::xfer>("Transfer finished - {} of {} words transferred", m_xferCount, m_xferLength);
+        if (m_xferType == TransferType::PutSector) {
+            const uint32 sectorCount = m_xferLength * sizeof(uint16) / m_putSectorLength;
+            if (m_partitionManager.GetFreeBufferCount() >= sectorCount) {
+                for (uint32 i = 0; i < sectorCount; ++i) {
+                    m_partitionManager.InsertHead(m_xferPartition, m_scratchBuffers[i]);
+                }
+                devlog::trace<grp::xfer>("Sector sent to partition {}", m_xferPartition);
+            } else {
+                devlog::trace<grp::xfer>("Not enough room to write sector");
+            }
+            SetInterrupt(kHIRQ_EHST);
+        }
         m_xferType = TransferType::None;
         m_xferPos = 0;
         m_xferLength = 0;
     }
+}
+
+void CDBlock::EndTransfer() {
+    if (m_xferType == TransferType::None) {
+        return;
+    }
+
+    devlog::trace<grp::xfer>("Ending transfer at {} of {} words", m_xferPos, m_xferLength);
+    if (m_xferExtraCount > 0) {
+        devlog::debug<grp::xfer>("{} unexpected transfer attempts", m_xferExtraCount);
+    }
+
+    // Trigger EHST HIRQ if ending certain sector transfers
+    switch (m_xferType) {
+    case TransferType::GetSector:
+    case TransferType::GetThenDeleteSector:
+        if (m_xferType == TransferType::GetThenDeleteSector) {
+            if (m_xferBufferPos < m_getSectorLength / sizeof(uint16)) {
+                // Delete sector if not fully read
+                m_partitionManager.RemoveTail(m_xferPartition, m_xferSectorPos);
+                devlog::trace<grp::xfer>("Sector freed");
+            }
+        }
+        SetInterrupt(kHIRQ_EHST);
+        break;
+    case TransferType::PutSector: //
+    {
+        const uint32 sectorCount = m_xferLength * sizeof(uint16) / m_putSectorLength;
+        if (m_partitionManager.GetFreeBufferCount() >= sectorCount) {
+            for (uint32 i = 0; i < sectorCount; ++i) {
+                m_partitionManager.InsertHead(m_xferPartition, m_scratchBuffers[i]);
+            }
+            devlog::trace<grp::xfer>("Sector sent to partition {}", m_xferPartition);
+        } else {
+            devlog::trace<grp::xfer>("Not enough room to write sector");
+        }
+        SetInterrupt(kHIRQ_EHST);
+        break;
+    }
+    default: break;
+    }
+
+    m_xferType = TransferType::None;
+    m_xferPos = 0;
+    m_xferBufferPos = 0;
+    m_xferLength = 0;
+    m_xferCount = 0xFFFFFF;
 }
 
 bool CDBlock::ConnectCDDevice(uint8 filterNumber) {
@@ -2581,12 +2670,13 @@ void CDBlock::CmdPutSectorData() {
     const uint16 sectorNumber = m_CR[3];
 
     bool reject = false;
+    bool wait = false;
     if (partitionNumber >= kNumPartitions) [[unlikely]] {
         devlog::trace<grp::base>("Put sector transfer rejected: invalid partition {}", partitionNumber);
         reject = true;
-    } else if (m_partitionManager.GetFreeBufferCount() == 0) [[unlikely]] {
-        devlog::trace<grp::base>("Put sector transfer rejected: no free buffers available");
-        reject = true;
+    } else if (m_partitionManager.GetFreeBufferCount() < sectorNumber) [[unlikely]] {
+        devlog::trace<grp::base>("Put sector transfer rejected: not enough free buffers available");
+        wait = true;
     } else {
         SetupPutSectorTransfer(sectorNumber, partitionNumber);
         // TODO: should set status flag kStatusFlagXferRequest until ready
@@ -2595,6 +2685,8 @@ void CDBlock::CmdPutSectorData() {
     // Output structure: standard CD status data
     if (reject) [[unlikely]] {
         ReportCDStatus(kStatusReject);
+    } else if (wait) [[unlikely]] {
+        ReportCDStatus((m_status.statusCode & 0xF) | kStatusFlagWait);
     } else {
         ReportCDStatus();
     }
@@ -2688,7 +2780,8 @@ void CDBlock::CmdChangeDirectory() {
         // TODO: use filter to read the sector(s) containing the directory record
         reject = !m_fs.ChangeDirectory(fileID);
         if (!reject) {
-            devlog::debug<grp::base>("Changed directory to file ID {:X} using filter {}", fileID, filterNumber);
+            devlog::debug<grp::base>("Changed directory to {} (file ID {:X}) using filter {}", m_fs.GetCurrentPath(),
+                                     fileID, filterNumber);
         }
     } else if (filterNumber == 0xFF) {
         reject = true;

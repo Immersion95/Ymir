@@ -86,7 +86,7 @@ void SCSP::MapMemory(sys::Bus &bus) {
 
     // WRAM
     bus.MapBoth(
-        0x5A0'0000, 0x5AF'FFFF, this,
+        0x5A0'0000, 0x5A7'FFFF, this,
         [](uint32 address, void *ctx) -> uint8 { return cast(ctx).ReadWRAM<uint8>(address); },
         [](uint32 address, void *ctx) -> uint16 { return cast(ctx).ReadWRAM<uint16>(address); },
         [](uint32 address, void *ctx) -> uint32 {

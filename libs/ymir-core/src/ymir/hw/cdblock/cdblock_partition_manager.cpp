@@ -66,10 +66,13 @@ uint32 CDBlock::PartitionManager::DeleteSectors(uint8 partitionIndex, uint16 sec
     uint16 start, end;
     if (sectorPos == 0xFFFF) {
         start = totalSectors - 1;
-        end = start - sectorCount + 1;
     } else {
         start = sectorPos;
-        end = sectorPos + sectorCount - 1;
+    }
+    if (sectorCount == 0xFFFF) {
+        end = totalSectors - 1;
+    } else {
+        end = start - sectorCount + 1;
     }
     sectorCount = std::min<uint16>(sectorCount, partition.size());
     start = std::min<uint16>(start, sectorCount - 1);

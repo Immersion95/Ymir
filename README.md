@@ -16,7 +16,7 @@ A work-in-progress Sega Saturn emulator.
 
 ## Features
 
-- Load games from BIN+CUE, IMG+CCD, MDF+MDS or ISO files
+- Load games from MAME CHD, BIN+CUE, IMG+CCD, MDF+MDS or ISO files
 - Automatic IPL (BIOS) ROM detection
 - Automatic region switching
 - Up to two players with standard Control Pads on both ports (more to come)

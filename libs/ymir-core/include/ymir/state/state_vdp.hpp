@@ -9,6 +9,9 @@
 namespace ymir::state {
 
 // Version history:
+// v5:
+// - New fields
+//   - VDPRendererState::erase = false
 // v4:
 // - Changed fields
 //   - NormBGLayerState::fracScrollX and fracScrollY no longer include the values of SC[XY][ID]N#. Therefore, they need
@@ -215,6 +218,8 @@ struct VDPState {
             sint32 localCoordY;
 
             bool rendering;
+
+            bool erase;
 
             uint64 cycleCount;
         };

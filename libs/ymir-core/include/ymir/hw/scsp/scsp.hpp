@@ -145,7 +145,7 @@ public:
 private:
     alignas(16) std::array<uint8, m68k::kM68KWRAMSize> m_WRAM;
 
-    alignas(16) std::array<uint8, 2352 * 75> m_cddaBuffer;
+    alignas(16) std::array<uint8, 2352 * 15> m_cddaBuffer;
     uint32 m_cddaReadPos;
     uint32 m_cddaWritePos;
     // set to true when there's enough audio data to be read by the SCSP
@@ -207,7 +207,7 @@ private:
     T Read(uint32 address) {
         static constexpr SCSPAccessType accessType = instrFetch ? SCSPAccessType::M68kCode : SCSPAccessType::M68kData;
 
-        if (util::AddressInRange<0x000000, 0x0FFFFF>(address)) {
+        if (util::AddressInRange<0x000000, 0x07FFFF>(address)) {
             // TODO: handle memory size bit
             return ReadWRAM<T>(address);
         } else if (util::AddressInRange<0x100000, 0x1FFFFF>(address)) {
@@ -219,7 +219,7 @@ private:
 
     template <mem_primitive T>
     void Write(uint32 address, T value) {
-        if (util::AddressInRange<0x000000, 0x0FFFFF>(address)) {
+        if (util::AddressInRange<0x000000, 0x07FFFF>(address)) {
             WriteWRAM<T>(address, value);
         } else if (util::AddressInRange<0x100000, 0x1FFFFF>(address)) {
             WriteReg<T, SCSPAccessType::M68kData>(address & 0xFFF, value);

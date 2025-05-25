@@ -978,15 +978,11 @@ FORCE_INLINE void SCU::WriteRegByte(uint32 address, uint8 value) {
 
 template <bool poke>
 FORCE_INLINE void SCU::WriteRegWord(uint32 address, uint16 value) {
-    if constexpr (poke) {
-        uint32 currValue = ReadReg<uint32, true>(address & ~3u);
-        const uint32 shift = (~address & 2u) * 8u;
-        const uint32 mask = ~(0xFFFF << shift);
-        currValue = (currValue & mask) | (value << shift);
-        WriteRegLong<true>(address & ~3u, currValue);
-    } else {
-        devlog::debug<grp::regs>("unhandled 16-bit SCU register write to {:02X} = {:X}", address, value);
-    }
+    uint32 currValue = ReadReg<uint32, poke>(address & ~3u);
+    const uint32 shift = (~address & 2u) * 8u;
+    const uint32 mask = ~(0xFFFF << shift);
+    currValue = (currValue & mask) | (value << shift);
+    WriteRegLong<poke>(address & ~3u, currValue);
 }
 
 template <bool poke>

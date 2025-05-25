@@ -101,7 +101,7 @@ struct StreamOpcodeFetcher : public IOpcodeFetcher<TOpcode> {
         m_input->seekg(0, std::ios::end);
         const size_t size = m_input->tellg();
         m_input->seekg(offset, std::ios::beg);
-        m_endPos = std::min(offset + length, size);
+        m_endPos = length == ~static_cast<size_t>(0) ? size : std::min(offset + length, size);
     }
 
     Result Fetch() final {

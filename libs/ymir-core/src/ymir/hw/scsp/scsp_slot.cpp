@@ -608,6 +608,8 @@ void Slot::SaveState(state::SCSPSlotState &state) const {
     state.sample1 = sample1;
     state.sample2 = sample2;
     state.output = output;
+
+    state.finalLevel = finalLevel;
 }
 
 bool Slot::ValidateState(const state::SCSPSlotState &state) const {
@@ -758,6 +760,8 @@ void Slot::LoadState(const state::SCSPSlotState &state) {
     sample1 = state.sample1;
     sample2 = state.sample2;
     output = state.output;
+
+    finalLevel = state.finalLevel;
 }
 
 uint32 Slot::CalcEffectiveRate(uint8 rate) const {

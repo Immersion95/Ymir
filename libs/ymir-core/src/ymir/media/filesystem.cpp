@@ -5,6 +5,7 @@
 #include <xxh3.h>
 
 #include <cassert>
+#include <vector>
 
 using namespace ymir::media::iso9660;
 
@@ -120,9 +121,14 @@ bool Filesystem::ChangeDirectory(uint32 fileID) {
     if (fileID == 0xFFFFFF) {
         // Go to root directory; should be the first in the list
         m_currDirectory = 0;
-    } else if (m_currDirectory != ~0 && fileID - m_currFileOffset < m_directories.size()) {
+    } else if (fileID == 0) {
+        // Self directory; no change
+    } else if (m_currDirectory != ~0 && fileID == 1) {
+        // Go to parent directory
+        m_currDirectory = m_directories[m_currDirectory].m_parent - 1;
+    } else if (m_currDirectory != ~0 && fileID - 2 + m_currFileOffset < m_directories.size()) {
         // Go to specified directory
-        m_currDirectory = fileID - m_currFileOffset;
+        m_currDirectory = fileID - 2 + m_currFileOffset;
     } else {
         // File ID out of range or invalid current directory
         return false;
@@ -130,6 +136,45 @@ bool Filesystem::ChangeDirectory(uint32 fileID) {
 
     m_currFileOffset = 0;
     return true;
+}
+
+std::string Filesystem::GetCurrentPath() const {
+    if (!IsValid()) {
+        return "";
+    }
+    if (!HasCurrentDirectory()) {
+        return "";
+    }
+    assert(m_currDirectory < m_directories.size());
+
+    if (m_currDirectory == 0) {
+        // Root directory
+        return "/";
+    }
+
+    // Build path from components
+    std::vector<uint32> fullPath{};
+    uint32 currDir = m_currDirectory;
+    fullPath.push_back(currDir);
+    while (currDir != 0 && fullPath.size() < 32) {
+        currDir = m_directories[currDir].m_parent - 1; // 1-indexed
+        if (currDir != 0) {
+            fullPath.push_back(currDir);
+        }
+    }
+
+    std::string out{};
+
+    bool first = true;
+    for (auto it = fullPath.rbegin(); it != fullPath.rend(); ++it) {
+        if (first) {
+            first = false;
+        } else {
+            out += "/";
+        }
+        out += m_directories[*it].m_name;
+    }
+    return out;
 }
 
 uint32 Filesystem::GetFileCount() const {
@@ -229,7 +274,8 @@ bool Filesystem::ReadPathTableRecords(const Track &track, const VolumeDescriptor
             }
 
             // Create a directory entry
-            Directory &directory = m_directories.emplace_back(dirRecord, pathTableRecord.parentDirNumber);
+            Directory &directory =
+                m_directories.emplace_back(dirRecord, pathTableRecord.parentDirNumber, pathTableRecord.directoryID);
             auto &contents = directory.GetContents();
 
             // Read directory contents

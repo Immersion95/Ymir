@@ -328,6 +328,9 @@ bool DisassembleSH2(Disassembler &disasm, std::string_view origin, const std::ve
     sh2Disasm.address = *maybeAddress;
 
     auto fetcher = MakeFetcher<SH2OpcodeFetcher, CommandLineSH2OpcodeFetcher, StreamSH2OpcodeFetcher>(args, inputFile);
+    if (!fetcher) {
+        return false;
+    }
 
     bool running = true;
     const auto visitor = [&](auto &value) {

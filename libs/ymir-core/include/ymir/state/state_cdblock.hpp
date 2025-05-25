@@ -7,6 +7,14 @@
 
 #include <array>
 
+// Version history:
+// v5:
+// - New fields
+//   - enum CDBlockState::TransferType: added PutSector (= 6)
+//   - scratchBufferPutIndex = 0
+// - Removed fields
+//   - scratchBuffer: moved into the buffers array
+
 namespace ymir::state {
 
 struct CDBlockState {
@@ -48,7 +56,15 @@ struct CDBlockState {
     uint8 discAuthStatus;
     uint8 mpegAuthStatus;
 
-    enum class TransferType { None, TOC, GetSector, GetThenDeleteSector, FileInfo, Subcode };
+    enum class TransferType {
+        None = 0,
+        TOC = 1,
+        GetSector = 2,
+        GetThenDeleteSector = 3,
+        PutSector = 6,
+        FileInfo = 4,
+        Subcode = 5
+    };
     TransferType xferType;
     uint32 xferPos;
     uint32 xferLength;
@@ -74,10 +90,13 @@ struct CDBlockState {
         uint8 submode;
         uint8 codingInfo;
 
+        // 0 to kNumPartitions-1 = that partition
+        // 255 = scratch buffer or not used
+        // All buffers are stored sequentially
         uint8 partitionIndex;
     };
-    alignas(16) std::array<BufferState, cdblock::kNumBuffers> buffers;
-    BufferState scratchBuffer;
+    alignas(16) std::array<BufferState, cdblock::kNumBuffers + 1> buffers; // 200 buffers + 1 scratch buffer
+    uint32 scratchBufferPutIndex;
 
     struct FilterState {
         uint32 startFrameAddress;

@@ -9,6 +9,7 @@
 #include "iso9660.hpp"
 
 #include <cassert>
+#include <string>
 #include <vector>
 
 namespace ymir::media::fs {
@@ -21,7 +22,8 @@ struct FileInfo {
         , unitSize(dirRecord.fileUnitSize)
         , interleaveGapSize(dirRecord.interleaveGapSize)
         , fileNumber(fileID)
-        , attributes(dirRecord.flags) {}
+        , attributes(dirRecord.flags)
+        , name(dirRecord.fileID) {}
 
     uint32 frameAddress = ~0;
     uint32 fileSize = ~0;
@@ -29,9 +31,18 @@ struct FileInfo {
     uint8 interleaveGapSize = ~0;
     uint8 fileNumber = ~0;
     uint8 attributes = ~0;
+    std::string name = "";
 
     bool IsValid() const {
         return frameAddress != ~0;
+    }
+
+    bool IsDirectory() const {
+        return bit::test<1>(attributes);
+    }
+
+    bool IsFile() const {
+        return !IsDirectory();
     }
 };
 inline constexpr FileInfo kEmptyFileInfo = {};
@@ -44,7 +55,8 @@ public:
         , m_size(dirRecord.dataSize)
         , m_parent(parent)
         , m_isDirectory(bit::test<1>(dirRecord.flags))
-        , m_fileInfo(dirRecord, fileID) {}
+        , m_fileInfo(dirRecord, fileID)
+        , m_name(dirRecord.fileID) {}
 
     uint32 FrameAddress() const {
         return m_frameAddress;
@@ -76,14 +88,16 @@ private:
     uint16 m_parent;
     bool m_isDirectory;
     FileInfo m_fileInfo;
+    std::string m_name;
 };
 
 // Represents a path table directory.
 class Directory {
 public:
-    Directory(const iso9660::DirectoryRecord &dirRecord, uint16 parent)
+    Directory(const iso9660::DirectoryRecord &dirRecord, uint16 parent, std::string_view name)
         : m_frameAddress(dirRecord.extentPos)
-        , m_parent(parent) {
+        , m_parent(parent)
+        , m_name(name) {
         assert(bit::test<1>(dirRecord.flags));
     }
 
@@ -102,6 +116,7 @@ public:
 private:
     uint32 m_frameAddress;
     uint16 m_parent;
+    std::string m_name;
 
     std::vector<FilesystemEntry> m_contents;
 
@@ -126,6 +141,11 @@ public:
     // Returns true if succesful, false if fileID is not a directory or does not exist.
     // The filesystem state is not modified on failure.
     bool ChangeDirectory(uint32 fileID);
+
+    // Retrieves the path to the current directory.
+    // Returns an empty string if the file system is invalid.
+    // Returns "/" if the current directory is the root directory.
+    std::string GetCurrentPath() const;
 
     // Determines if the file system is valid, i.e., there is at least one directory.
     bool IsValid() const {

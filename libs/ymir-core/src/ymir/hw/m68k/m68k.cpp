@@ -3145,7 +3145,8 @@ FORCE_INLINE void MC68EC000::Instr_Reset(uint16 instr) {
     if (CheckPrivilege()) {
         PC += 2;
         // TODO: assert RESET signal, causing all external devices to be reset
-        PrefetchTransfer();
+        Reset(false);
+        // PrefetchTransfer();
     }
 }
 

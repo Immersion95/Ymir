@@ -181,10 +181,9 @@ void VDP::MapMemory(sys::Bus &bus) {
     // VDP1 registers
     bus.MapNormal(
         0x5D0'0000, 0x5D7'FFFF, this,
-        [](uint32 address, void * /*ctx*/) -> uint8 {
-            address &= 0x7FFFF;
-            devlog::debug<grp::vdp1_regs>("Illegal 8-bit VDP1 register read from {:05X}", address);
-            return 0;
+        [](uint32 address, void *ctx) -> uint8 {
+            const uint16 value = cast(ctx).VDP1ReadReg<false>(address & ~1);
+            return value >> ((~address & 1) * 8u);
         },
         [](uint32 address, void *ctx) -> uint16 { return cast(ctx).VDP1ReadReg<false>(address); },
         [](uint32 address, void *ctx) -> uint32 {
@@ -192,9 +191,12 @@ void VDP::MapMemory(sys::Bus &bus) {
             value |= cast(ctx).VDP1ReadReg<false>(address + 2) << 0u;
             return value;
         },
-        [](uint32 address, uint8 value, void * /*ctx*/) {
-            address &= 0x7FFFF;
-            devlog::debug<grp::vdp1_regs>("Illegal 8-bit VDP1 register write to {:05X} = {:02X}", address, value);
+        [](uint32 address, uint8 value, void *ctx) {
+            uint16 currValue = cast(ctx).VDP1ReadReg<false>(address & ~1);
+            const uint16 shift = (~address & 1) * 8u;
+            const uint16 mask = ~(0xFF << shift);
+            currValue = (currValue & mask) | (value << shift);
+            cast(ctx).VDP1WriteReg<false>(address & ~1, currValue);
         },
         [](uint32 address, uint16 value, void *ctx) { cast(ctx).VDP1WriteReg<false>(address, value); },
         [](uint32 address, uint32 value, void *ctx) {
@@ -205,7 +207,7 @@ void VDP::MapMemory(sys::Bus &bus) {
     bus.MapSideEffectFree(
         0x5D0'0000, 0x5D7'FFFF, this,
         [](uint32 address, void *ctx) -> uint8 {
-            const uint16 value = cast(ctx).VDP1ReadReg<true>(address);
+            const uint16 value = cast(ctx).VDP1ReadReg<true>(address & ~1);
             return value >> ((~address & 1) * 8u);
         },
         [](uint32 address, void *ctx) -> uint16 { return cast(ctx).VDP1ReadReg<true>(address); },
@@ -304,7 +306,7 @@ void VDP::MapMemory(sys::Bus &bus) {
     bus.MapSideEffectFree(
         0x5F8'0000, 0x5FB'FFFF, this,
         [](uint32 address, void *ctx) -> uint8 {
-            const uint16 value = cast(ctx).VDP2ReadReg(address);
+            const uint16 value = cast(ctx).VDP2ReadReg(address & ~1);
             return value >> ((~address & 1) * 8u);
         },
         [](uint32 address, uint8 value, void *ctx) {
@@ -552,6 +554,7 @@ void VDP::SaveState(state::VDPState &state) const {
     state.renderer.vdp1State.localCoordX = m_VDP1RenderContext.localCoordX;
     state.renderer.vdp1State.localCoordY = m_VDP1RenderContext.localCoordY;
     state.renderer.vdp1State.rendering = m_VDP1RenderContext.rendering;
+    state.renderer.vdp1State.erase = m_VDP1RenderContext.erase;
     state.renderer.vdp1State.cycleCount = m_VDP1RenderContext.cycleCount;
 
     for (size_t i = 0; i < 4; i++) {
@@ -806,6 +809,7 @@ void VDP::LoadState(const state::VDPState &state) {
     m_VDP1RenderContext.localCoordX = state.renderer.vdp1State.localCoordX;
     m_VDP1RenderContext.localCoordY = state.renderer.vdp1State.localCoordY;
     m_VDP1RenderContext.rendering = state.renderer.vdp1State.rendering;
+    m_VDP1RenderContext.erase = state.renderer.vdp1State.erase;
     m_VDP1RenderContext.cycleCount = state.renderer.vdp1State.cycleCount;
 
     for (size_t i = 0; i < 4; i++) {
@@ -1250,6 +1254,22 @@ void VDP::BeginHPhaseVBlankOut() {
         devlog::trace<grp::base>("## HBlank half + VBlank OUT  FCM={:d} FCT={:d} manualswap={:d} PTM={:d}",
                                  m_VDP1.fbSwapMode, m_VDP1.fbSwapTrigger, m_VDP1.fbManualSwap, m_VDP1.plotTrigger);
 
+        // Erase frame if manually requested in previous frame
+        if (m_VDP1RenderContext.erase) {
+            m_VDP1RenderContext.erase = false;
+            if (m_threadedVDPRendering) {
+                m_VDPRenderContext.EnqueueEvent(VDPRenderEvent::VDP1EraseFramebuffer());
+            } else {
+                VDP1EraseFramebuffer();
+            }
+        }
+
+        // If manual erase is requested, schedule it for the next frame
+        if (m_VDP1.fbManualErase) {
+            m_VDP1.fbManualErase = false;
+            m_VDP1RenderContext.erase = true;
+        }
+
         // Swap framebuffer in manual swap requested or in 1-cycle mode
         if (!m_VDP1.fbSwapMode || m_VDP1.fbManualSwap) {
             m_VDP1.fbManualSwap = false;
@@ -1562,15 +1582,6 @@ FORCE_INLINE void VDP::VDP1EraseFramebuffer() {
 
 FORCE_INLINE void VDP::VDP1SwapFramebuffer() {
     devlog::trace<grp::vdp1_render>("Swapping framebuffers - draw {}, display {}", m_displayFB, m_displayFB ^ 1);
-
-    if (m_VDP1.fbManualErase) {
-        m_VDP1.fbManualErase = false;
-        if (m_threadedVDPRendering) {
-            m_VDPRenderContext.EnqueueEvent(VDPRenderEvent::VDP1EraseFramebuffer());
-        } else {
-            VDP1EraseFramebuffer();
-        }
-    }
 
     if (m_threadedVDPRendering) {
         m_VDPRenderContext.EnqueueEvent(VDPRenderEvent::VDP1SwapFramebuffer());
@@ -4434,12 +4445,18 @@ FORCE_INLINE Color888 VDP::VDP2FetchCRAMColor(uint32 cramOffset, uint32 colorInd
 }
 
 FLATTEN FORCE_INLINE SpriteData VDP::VDP2FetchSpriteData(uint32 fbOffset) {
-    const VDP2Regs &regs = VDP2GetRegs();
+    const VDP1Regs &regs1 = VDP1GetRegs();
+    const VDP2Regs &regs2 = VDP2GetRegs();
 
-    const uint8 type = regs.spriteParams.type;
+    const uint8 type = regs2.spriteParams.type;
     if (type < 8) {
         return VDP2FetchWordSpriteData(fbOffset * sizeof(uint16), type);
     } else {
+        // Adjust the offset if VDP1 used 16-bit data.
+        // The majority of games actually set these two parameters properly, but there's *always* an exception...
+        if (!regs1.pixel8Bits) {
+            fbOffset = fbOffset * sizeof(uint16) + 1;
+        }
         return VDP2FetchByteSpriteData(fbOffset, type);
     }
 }

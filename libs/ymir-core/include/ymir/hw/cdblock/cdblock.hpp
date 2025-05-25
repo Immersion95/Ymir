@@ -179,7 +179,7 @@ private:
     // -------------------------------------------------------------------------
     // Data transfers
 
-    enum class TransferType { None, TOC, GetSector, GetThenDeleteSector, FileInfo, Subcode };
+    enum class TransferType { None, TOC, GetSector, GetThenDeleteSector, PutSector, FileInfo, Subcode };
 
     // General transfer parameters
     TransferType m_xferType;                   // Type of transfer in progress
@@ -207,7 +207,6 @@ private:
     void SetupPutSectorTransfer(uint16 sectorCount, uint8 partitionNumber);
     uint32 SetupFileInfoTransfer(uint32 fileID);
     bool SetupSubcodeTransfer(uint8 type);
-    void EndTransfer();
 
     void ReadSector();
 
@@ -215,6 +214,8 @@ private:
     void DoWriteTransfer(uint16 value);
 
     void AdvanceTransfer();
+
+    void EndTransfer();
 
     // -------------------------------------------------------------------------
     // Buffers, partitions and filters
@@ -296,7 +297,8 @@ private:
     PartitionManager m_partitionManager;
     std::array<Filter, kNumFilters> m_filters;
 
-    Buffer m_scratchBuffer;
+    std::array<Buffer, kNumBuffers + 1> m_scratchBuffers;
+    uint32 m_scratchBufferPutIndex;
 
     uint8 m_cdDeviceConnection;
     uint8 m_lastCDWritePartition;

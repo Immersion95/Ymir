@@ -32,6 +32,19 @@ Virtua Fighter 1 (in-game)
 
 The manual framebuffer erase flag is *not* handled at VBlank IN HBlank IN. It is handled just before the next framebuffer swap.
 
+-----
+
+I Love Mickey Mouse/Donald Duck
+  Always uses VBE=0 PTM=2
+  When rendering sprites normally:
+    Every frame:
+      [VBlank IN] FCM=1 FCT=1 -- does manual swap every frame; screen is cleared by a polygon
+  When not rendering sprites (e.g. entering the items menu):
+    First frame only:
+      [VBlank IN] FCM=1 FCT=0 -- requests manual erase, no swap; screen is erased on next frame
+
+Manual erase does not depend on a swap to occur.
+
 
 =======
 Context
@@ -51,7 +64,10 @@ Relevant VDP1 registers:
   Manual erase is set when writing FCM=1 FCT=0 to FBCR.
   Manual swap is set when writing FCM=1 FCT=1 to FBCR.
 
-  Manual erase is handled before the next swap.
+  Manual erase is handled in the next frame.
+  If a manual swap is also requested, the erase happens just before the swap.
+
+  TODO: recheck VDP1 framebuffer erase and swap timings
 
 Relevant video signal events:
   VBlank IN
@@ -69,6 +85,6 @@ Relevant video signal events:
     Does not respond to manual framebuffer erase, nor does it clear the flag
   Halfway through HBlank during VBlank OUT
     Stops framebuffer erase if in progress
+    Triggers the manual framebuffer erase if requested in the previous frame and clears the manual erase flag
     Triggers VDP1 framebuffer swap if FCM=0 FCT=0 (1-cycle mode) or a manual swap was requested
       Clears the manual swap flag
-      Also triggers the manual framebuffer erase if requested just before the swap, and clears the manual erase flag

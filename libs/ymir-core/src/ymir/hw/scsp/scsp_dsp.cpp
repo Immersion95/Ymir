@@ -284,7 +284,7 @@ void DSP::LoadState(const state::SCSPDSP &state) {
     for (size_t i = 0; i < program.size(); i++) {
         program[i].u64 = state.MPRO[i];
         if (program[i].u64 != 0) {
-            m_programLength = i;
+            m_programLength = i + 1;
         }
     }
 

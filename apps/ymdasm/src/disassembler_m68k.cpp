@@ -319,7 +319,7 @@ bool DisassembleM68K(Disassembler &disasm, std::string_view origin, const std::v
     auto maybeAddress = ParseHex<uint32>(origin);
     if (!maybeAddress) {
         fmt::println("Invalid origin address: {}", origin);
-        return 1;
+        return false;
     }
 
     M68KDisassembler m68kDisasm{disasm};
@@ -327,6 +327,9 @@ bool DisassembleM68K(Disassembler &disasm, std::string_view origin, const std::v
 
     auto fetcher =
         MakeFetcher<M68KOpcodeFetcher, CommandLineM68KOpcodeFetcher, StreamM68KOpcodeFetcher>(args, inputFile);
+    if (!fetcher) {
+        return false;
+    }
 
     while (m68kDisasm.valid) {
         m68kDisasm.Disassemble([&]() -> uint16 {
