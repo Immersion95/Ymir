@@ -303,6 +303,7 @@ void SCUDSP::LoadState(const state::SCUDSPState &state) {
 template <bool debug>
 FORCE_INLINE void SCUDSP::Cmd_Operation(DSPInstr instr) {
     // ALU
+    ALU = AC;
     switch (instr.aluInfo.aluOp) {
     case 0b0000: break;            // NOP
     case 0b0001: ALU_AND(); break; // AND

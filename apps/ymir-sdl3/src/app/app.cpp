@@ -366,191 +366,10 @@ void App::RunEmulator() {
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; // Enable Keyboard Controls
     // io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;  // Enable Gamepad Controls
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable; // Enable Docking
-    // io.FontGlobalScale = m_context.displayScale;
 
     // Setup Dear ImGui style
-    ImGuiStyle &style = ImGui::GetStyle();
-    style.WindowPadding = ImVec2(6, 6);
-    style.FramePadding = ImVec2(4, 3);
-    style.ItemSpacing = ImVec2(7, 4);
-    style.ItemInnerSpacing = ImVec2(4, 4);
-    style.TouchExtraPadding = ImVec2(0, 0);
-    style.IndentSpacing = 21.0f;
-    style.ScrollbarSize = 15.0f;
-    style.GrabMinSize = 12.0f;
-    style.WindowBorderSize = 1.0f * m_context.displayScale;
-    style.ChildBorderSize = 1.0f * m_context.displayScale;
-    style.PopupBorderSize = 1.0f * m_context.displayScale;
-    style.FrameBorderSize = 0.0f * m_context.displayScale;
-    style.WindowRounding = 3.0f;
-    style.ChildRounding = 0.0f;
-    style.FrameRounding = 1.0f;
-    style.PopupRounding = 1.0f;
-    style.ScrollbarRounding = 1.0f;
-    style.GrabRounding = 1.0f;
-    style.TabBorderSize = 0.0f * m_context.displayScale;
-    style.TabBarBorderSize = 1.0f * m_context.displayScale;
-    style.TabBarOverlineSize = 2.0f;
-    style.TabCloseButtonMinWidthSelected = -1.0f;
-    style.TabCloseButtonMinWidthUnselected = 0.0f;
-    style.TabRounding = 2.0f;
-    style.CellPadding = ImVec2(3, 2);
-    style.TableAngledHeadersAngle = 50.0f * (2.0f * std::numbers::pi / 360.0f);
-    style.TableAngledHeadersTextAlign = ImVec2(0.50f, 0.00f);
-    style.WindowTitleAlign = ImVec2(0.50f, 0.50f);
-    style.WindowBorderHoverPadding = 5.0f;
-    style.WindowMenuButtonPosition = ImGuiDir_Left;
-    style.ColorButtonPosition = ImGuiDir_Right;
-    style.ButtonTextAlign = ImVec2(0.50f, 0.50f);
-    style.SelectableTextAlign = ImVec2(0.00f, 0.00f);
-    style.SeparatorTextBorderSize = 2.0f * m_context.displayScale;
-    style.SeparatorTextPadding = ImVec2(21, 2);
-    style.LogSliderDeadzone = 4.0f;
-    style.ImageBorderSize = 0.0f;
-    style.DockingSeparatorSize = 2.0f;
-    style.DisplayWindowPadding = ImVec2(21, 21);
-    style.DisplaySafeAreaPadding = ImVec2(3, 3);
-    style.ScaleAllSizes(m_context.displayScale);
-
-    // Setup Dear ImGui colors
-    ImVec4 *colors = ImGui::GetStyle().Colors;
-    colors[ImGuiCol_Text] = ImVec4(0.91f, 0.92f, 0.94f, 1.00f);
-    colors[ImGuiCol_TextDisabled] = ImVec4(0.38f, 0.39f, 0.41f, 1.00f);
-    colors[ImGuiCol_WindowBg] = ImVec4(0.05f, 0.06f, 0.08f, 0.95f);
-    colors[ImGuiCol_ChildBg] = ImVec4(0.14f, 0.18f, 0.26f, 0.18f);
-    colors[ImGuiCol_PopupBg] = ImVec4(0.07f, 0.06f, 0.09f, 0.94f);
-    colors[ImGuiCol_Border] = ImVec4(0.60f, 0.65f, 0.77f, 0.31f);
-    colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-    colors[ImGuiCol_FrameBg] = ImVec4(0.10f, 0.22f, 0.51f, 0.66f);
-    colors[ImGuiCol_FrameBgHovered] = ImVec4(0.25f, 0.36f, 0.62f, 0.80f);
-    colors[ImGuiCol_FrameBgActive] = ImVec4(0.63f, 0.71f, 0.92f, 0.84f);
-    colors[ImGuiCol_TitleBg] = ImVec4(0.10f, 0.10f, 0.13f, 1.00f);
-    colors[ImGuiCol_TitleBgActive] = ImVec4(0.23f, 0.36f, 0.72f, 1.00f);
-    colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.10f, 0.11f, 0.13f, 0.59f);
-    colors[ImGuiCol_MenuBarBg] = ImVec4(0.05f, 0.06f, 0.09f, 0.95f);
-    colors[ImGuiCol_ScrollbarBg] = ImVec4(0.04f, 0.05f, 0.05f, 0.69f);
-    colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.29f, 0.31f, 0.35f, 1.00f);
-    colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.36f, 0.39f, 0.45f, 1.00f);
-    colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.46f, 0.52f, 0.64f, 1.00f);
-    colors[ImGuiCol_CheckMark] = ImVec4(0.20f, 0.42f, 0.94f, 1.00f);
-    colors[ImGuiCol_SliderGrab] = ImVec4(0.43f, 0.57f, 0.91f, 1.00f);
-    colors[ImGuiCol_SliderGrabActive] = ImVec4(0.74f, 0.82f, 1.00f, 1.00f);
-    colors[ImGuiCol_Button] = ImVec4(0.26f, 0.46f, 0.98f, 0.40f);
-    colors[ImGuiCol_ButtonHovered] = ImVec4(0.26f, 0.46f, 0.98f, 1.00f);
-    colors[ImGuiCol_ButtonActive] = ImVec4(0.51f, 0.64f, 0.99f, 1.00f);
-    colors[ImGuiCol_Header] = ImVec4(0.26f, 0.46f, 0.98f, 0.40f);
-    colors[ImGuiCol_HeaderHovered] = ImVec4(0.26f, 0.46f, 0.98f, 0.80f);
-    colors[ImGuiCol_HeaderActive] = ImVec4(0.26f, 0.48f, 0.98f, 1.00f);
-    colors[ImGuiCol_Separator] = ImVec4(0.43f, 0.43f, 0.50f, 0.50f);
-    colors[ImGuiCol_SeparatorHovered] = ImVec4(0.10f, 0.40f, 0.75f, 0.78f);
-    colors[ImGuiCol_SeparatorActive] = ImVec4(0.10f, 0.40f, 0.75f, 1.00f);
-    colors[ImGuiCol_ResizeGrip] = ImVec4(0.26f, 0.46f, 0.98f, 0.20f);
-    colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.26f, 0.46f, 0.98f, 0.67f);
-    colors[ImGuiCol_ResizeGripActive] = ImVec4(0.26f, 0.46f, 0.98f, 0.95f);
-    colors[ImGuiCol_TabHovered] = ImVec4(0.26f, 0.46f, 0.98f, 0.80f);
-    colors[ImGuiCol_Tab] = ImVec4(0.18f, 0.29f, 0.58f, 0.86f);
-    colors[ImGuiCol_TabSelected] = ImVec4(0.20f, 0.33f, 0.68f, 1.00f);
-    colors[ImGuiCol_TabSelectedOverline] = ImVec4(0.26f, 0.46f, 0.98f, 1.00f);
-    colors[ImGuiCol_TabDimmed] = ImVec4(0.07f, 0.09f, 0.15f, 0.97f);
-    colors[ImGuiCol_TabDimmedSelected] = ImVec4(0.14f, 0.22f, 0.42f, 1.00f);
-    colors[ImGuiCol_TabDimmedSelectedOverline] = ImVec4(0.50f, 0.50f, 0.50f, 0.00f);
-    colors[ImGuiCol_DockingPreview] = ImVec4(0.26f, 0.46f, 0.98f, 0.70f);
-    colors[ImGuiCol_DockingEmptyBg] = ImVec4(0.20f, 0.20f, 0.20f, 1.00f);
-    colors[ImGuiCol_PlotLines] = ImVec4(0.61f, 0.61f, 0.61f, 1.00f);
-    colors[ImGuiCol_PlotLinesHovered] = ImVec4(1.00f, 0.43f, 0.35f, 1.00f);
-    colors[ImGuiCol_PlotHistogram] = ImVec4(0.90f, 0.53f, 0.00f, 1.00f);
-    colors[ImGuiCol_PlotHistogramHovered] = ImVec4(1.00f, 0.67f, 0.25f, 1.00f);
-    colors[ImGuiCol_TableHeaderBg] = ImVec4(0.19f, 0.19f, 0.20f, 1.00f);
-    colors[ImGuiCol_TableBorderStrong] = ImVec4(0.31f, 0.31f, 0.35f, 1.00f);
-    colors[ImGuiCol_TableBorderLight] = ImVec4(0.23f, 0.23f, 0.25f, 1.00f);
-    colors[ImGuiCol_TableRowBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-    colors[ImGuiCol_TableRowBgAlt] = ImVec4(1.00f, 1.00f, 1.00f, 0.06f);
-    colors[ImGuiCol_TextLink] = ImVec4(0.37f, 0.54f, 1.00f, 1.00f);
-    colors[ImGuiCol_TextSelectedBg] = ImVec4(0.43f, 0.59f, 0.98f, 0.43f);
-    colors[ImGuiCol_DragDropTarget] = ImVec4(0.97f, 0.60f, 0.19f, 0.90f);
-    colors[ImGuiCol_NavCursor] = ImVec4(0.26f, 0.46f, 0.98f, 1.00f);
-    colors[ImGuiCol_NavWindowingHighlight] = ImVec4(1.00f, 1.00f, 1.00f, 0.70f);
-    colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.20f);
-    colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.07f, 0.07f, 0.07f, 0.35f);
-
-    // Load Fonts
-    // - If no fonts are loaded, dear imgui will use the default font. You can also load multiple fonts and use
-    // ImGui::PushFont()/PopFont() to select them.
-    // - AddFontFromFileTTF() will return the ImFont* so you can store it if you need to select the font among multiple.
-    // - If the file cannot be loaded, the function will return a nullptr. Please handle those errors in your
-    // application (e.g. use an assertion, or display an error and quit).
-    // - The fonts will be rasterized at a given size (w/ oversampling) and stored into a texture when calling
-    // ImFontAtlas::Build()/GetTexDataAsXXXX(), which ImGui_ImplXXXX_NewFrame below will call.
-    // - Use '#define IMGUI_ENABLE_FREETYPE' in your imconfig file to use Freetype for higher quality font rendering.
-    // - Read 'docs/FONTS.md' for more instructions and details.
-    // - Remember that in C/C++ if you want to include a backslash \ in a string literal you need to write a double
-    // backslash \\ !
-    // - Our Emscripten build process allows embedding fonts to be accessible at runtime from the "fonts/" folder. See
-    // Makefile.emscripten for details.
-    // io.Fonts->AddFontDefault();
-    // io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\segoeui.ttf", 18.0f);
-    // io.Fonts->AddFontFromFileTTF("../../misc/fonts/DroidSans.ttf", 16.0f);
-    // io.Fonts->AddFontFromFileTTF("../../misc/fonts/Roboto-Medium.ttf", 16.0f);
-    // io.Fonts->AddFontFromFileTTF("../../misc/fonts/Cousine-Regular.ttf", 15.0f);
-    // ImFont* font = io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\ArialUni.ttf", 18.0f, nullptr,
-    // io.Fonts->GetGlyphRangesJapanese()); IM_ASSERT(font != nullptr);
-    // io.Fonts->Build();
-    {
-        ImFontConfig config;
-        config.FontDataOwnedByAtlas = false;
-        // TODO: config.MergeMode = true; to merge multiple fonts into one; useful for combining latin + JP + icons
-
-        ImVector<ImWchar> ranges;
-        ImFontGlyphRangesBuilder builder;
-        builder.AddRanges(io.Fonts->GetGlyphRangesDefault());
-        // builder.AddRanges(io.Fonts->GetGlyphRangesChineseFull());
-        // builder.AddRanges(io.Fonts->GetGlyphRangesCyrillic());
-        // builder.AddRanges(io.Fonts->GetGlyphRangesGreek());
-        // builder.AddRanges(io.Fonts->GetGlyphRangesJapanese());
-        // builder.AddRanges(io.Fonts->GetGlyphRangesKorean());
-        // builder.AddRanges(io.Fonts->GetGlyphRangesThai());
-        // builder.AddRanges(io.Fonts->GetGlyphRangesVietnamese());
-        builder.AddChar(0x2014); // Em-dash
-        builder.AddChar(0x2190); // Left arrow
-        builder.AddChar(0x2191); // Up arrow
-        builder.AddChar(0x2192); // Right arrow
-        builder.AddChar(0x2193); // Down arrow
-        builder.BuildRanges(&ranges);
-
-        auto loadFont = [&](const char *path, float size) {
-            cmrc::file file = embedfs.open(path);
-            return io.Fonts->AddFontFromMemoryTTF((void *)file.begin(), file.size(), size, &config, ranges.Data);
-        };
-
-        m_context.fonts.sansSerif.small.regular = loadFont("fonts/SplineSans-Medium.ttf", 14 * m_context.displayScale);
-        m_context.fonts.sansSerif.small.bold = loadFont("fonts/SplineSans-Bold.ttf", 14 * m_context.displayScale);
-        m_context.fonts.sansSerif.medium.regular = loadFont("fonts/SplineSans-Medium.ttf", 16 * m_context.displayScale);
-        m_context.fonts.sansSerif.medium.bold = loadFont("fonts/SplineSans-Bold.ttf", 16 * m_context.displayScale);
-        m_context.fonts.sansSerif.large.regular = loadFont("fonts/SplineSans-Medium.ttf", 20 * m_context.displayScale);
-        m_context.fonts.sansSerif.large.bold = loadFont("fonts/SplineSans-Bold.ttf", 20 * m_context.displayScale);
-        m_context.fonts.sansSerif.xlarge.regular = loadFont("fonts/SplineSans-Medium.ttf", 28 * m_context.displayScale);
-        m_context.fonts.sansSerif.xlarge.bold = loadFont("fonts/SplineSans-Bold.ttf", 28 * m_context.displayScale);
-
-        m_context.fonts.monospace.small.regular =
-            loadFont("fonts/SplineSansMono-Medium.ttf", 14 * m_context.displayScale);
-        m_context.fonts.monospace.small.bold = loadFont("fonts/SplineSansMono-Bold.ttf", 14 * m_context.displayScale);
-        m_context.fonts.monospace.medium.regular =
-            loadFont("fonts/SplineSansMono-Medium.ttf", 16 * m_context.displayScale);
-        m_context.fonts.monospace.medium.bold = loadFont("fonts/SplineSansMono-Bold.ttf", 16 * m_context.displayScale);
-        m_context.fonts.monospace.large.regular =
-            loadFont("fonts/SplineSansMono-Medium.ttf", 20 * m_context.displayScale);
-        m_context.fonts.monospace.large.bold = loadFont("fonts/SplineSansMono-Bold.ttf", 20 * m_context.displayScale);
-        m_context.fonts.monospace.xlarge.regular =
-            loadFont("fonts/SplineSansMono-Medium.ttf", 28 * m_context.displayScale);
-        m_context.fonts.monospace.xlarge.bold = loadFont("fonts/SplineSansMono-Bold.ttf", 28 * m_context.displayScale);
-
-        m_context.fonts.display.small = loadFont("fonts/ZenDots-Regular.ttf", 24 * m_context.displayScale);
-        m_context.fonts.display.large = loadFont("fonts/ZenDots-Regular.ttf", 64 * m_context.displayScale);
-
-        io.Fonts->Build();
-
-        io.FontDefault = m_context.fonts.sansSerif.medium.regular;
-    }
+    const ImGuiStyle &style = ReloadStyle(m_context.displayScale);
+    ReloadFonts(m_context.displayScale);
 
     // ---------------------------------
     // Create window
@@ -605,6 +424,7 @@ void App::RunEmulator() {
         // Assume the following calls succeed
         SDL_SetStringProperty(windowProps, SDL_PROP_WINDOW_CREATE_TITLE_STRING, "Ymir " Ymir_VERSION);
         SDL_SetBooleanProperty(windowProps, SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true);
+        SDL_SetBooleanProperty(windowProps, SDL_PROP_WINDOW_CREATE_HIGH_PIXEL_DENSITY_BOOLEAN, true);
         SDL_SetNumberProperty(windowProps, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, scaledWidth);
         SDL_SetNumberProperty(windowProps, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, scaledHeight + menuBarHeight);
         SDL_SetNumberProperty(windowProps, SDL_PROP_WINDOW_CREATE_X_NUMBER, SDL_WINDOWPOS_CENTERED);
@@ -756,7 +576,7 @@ void App::RunEmulator() {
     ImGui_ImplSDL3_InitForSDLRenderer(screen.window, renderer);
     ImGui_ImplSDLRenderer3_Init(renderer);
 
-    ImVec4 clearColor = ImVec4(0.15f, 0.18f, 0.37f, 1.00f);
+    ImVec4 clearColor = ImVec4(0.0f, 0.0f, 0.0f, 1.00f);
 
     // ---------------------------------
     // Setup framebuffer and render callbacks
@@ -1480,6 +1300,15 @@ void App::RunEmulator() {
                 // evt.gsensor.data;
                 break;
 
+            case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
+                m_context.displayScale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+                devlog::info<grp::base>("Primary display DPI scaling: {:.1f}%", m_context.displayScale * 100.0f);
+                ReloadStyle(m_context.displayScale);
+
+                // Delete the current font-texture to ensure `ImGui::NewFrame` generates a new one
+                ImGui_ImplSDLRenderer3_DestroyFontsTexture();
+                ReloadFonts(m_context.displayScale);
+                break;
             case SDL_EVENT_QUIT: goto end_loop; break;
             case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
                 if (evt.window.windowID == SDL_GetWindowID(screen.window)) {
@@ -2557,6 +2386,198 @@ void App::RebindInputs() {
     m_context.settings.RebindInputs();
 }
 
+ImGuiStyle &App::ReloadStyle(float displayScale) {
+    ImGuiStyle &style = ImGui::GetStyle();
+    style.WindowPadding = ImVec2(6, 6);
+    style.FramePadding = ImVec2(4, 3);
+    style.ItemSpacing = ImVec2(7, 4);
+    style.ItemInnerSpacing = ImVec2(4, 4);
+    style.TouchExtraPadding = ImVec2(0, 0);
+    style.IndentSpacing = 21.0f;
+    style.ScrollbarSize = 15.0f;
+    style.GrabMinSize = 12.0f;
+    style.WindowBorderSize = 1.0f * displayScale;
+    style.ChildBorderSize = 1.0f * displayScale;
+    style.PopupBorderSize = 1.0f * displayScale;
+    style.FrameBorderSize = 0.0f * displayScale;
+    style.WindowRounding = 3.0f;
+    style.ChildRounding = 0.0f;
+    style.FrameRounding = 1.0f;
+    style.PopupRounding = 1.0f;
+    style.ScrollbarRounding = 1.0f;
+    style.GrabRounding = 1.0f;
+    style.TabBorderSize = 0.0f * displayScale;
+    style.TabBarBorderSize = 1.0f * displayScale;
+    style.TabBarOverlineSize = 2.0f;
+    style.TabCloseButtonMinWidthSelected = -1.0f;
+    style.TabCloseButtonMinWidthUnselected = 0.0f;
+    style.TabRounding = 2.0f;
+    style.CellPadding = ImVec2(3, 2);
+    style.TableAngledHeadersAngle = 50.0f * (2.0f * std::numbers::pi / 360.0f);
+    style.TableAngledHeadersTextAlign = ImVec2(0.50f, 0.00f);
+    style.WindowTitleAlign = ImVec2(0.50f, 0.50f);
+    style.WindowBorderHoverPadding = 5.0f;
+    style.WindowMenuButtonPosition = ImGuiDir_Left;
+    style.ColorButtonPosition = ImGuiDir_Right;
+    style.ButtonTextAlign = ImVec2(0.50f, 0.50f);
+    style.SelectableTextAlign = ImVec2(0.00f, 0.00f);
+    style.SeparatorTextBorderSize = 2.0f * displayScale;
+    style.SeparatorTextPadding = ImVec2(21, 2);
+    style.LogSliderDeadzone = 4.0f;
+    style.ImageBorderSize = 0.0f;
+    style.DockingSeparatorSize = 2.0f;
+    style.DisplayWindowPadding = ImVec2(21, 21);
+    style.DisplaySafeAreaPadding = ImVec2(3, 3);
+    style.ScaleAllSizes(displayScale);
+
+    // Setup Dear ImGui colors
+    ImVec4 *colors = ImGui::GetStyle().Colors;
+    colors[ImGuiCol_Text] = ImVec4(0.91f, 0.92f, 0.94f, 1.00f);
+    colors[ImGuiCol_TextDisabled] = ImVec4(0.38f, 0.39f, 0.41f, 1.00f);
+    colors[ImGuiCol_WindowBg] = ImVec4(0.05f, 0.06f, 0.08f, 0.95f);
+    colors[ImGuiCol_ChildBg] = ImVec4(0.14f, 0.18f, 0.26f, 0.18f);
+    colors[ImGuiCol_PopupBg] = ImVec4(0.07f, 0.06f, 0.09f, 0.94f);
+    colors[ImGuiCol_Border] = ImVec4(0.60f, 0.65f, 0.77f, 0.31f);
+    colors[ImGuiCol_BorderShadow] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    colors[ImGuiCol_FrameBg] = ImVec4(0.10f, 0.22f, 0.51f, 0.66f);
+    colors[ImGuiCol_FrameBgHovered] = ImVec4(0.25f, 0.36f, 0.62f, 0.80f);
+    colors[ImGuiCol_FrameBgActive] = ImVec4(0.63f, 0.71f, 0.92f, 0.84f);
+    colors[ImGuiCol_TitleBg] = ImVec4(0.10f, 0.10f, 0.13f, 1.00f);
+    colors[ImGuiCol_TitleBgActive] = ImVec4(0.23f, 0.36f, 0.72f, 1.00f);
+    colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.10f, 0.11f, 0.13f, 0.59f);
+    colors[ImGuiCol_MenuBarBg] = ImVec4(0.05f, 0.06f, 0.09f, 0.95f);
+    colors[ImGuiCol_ScrollbarBg] = ImVec4(0.04f, 0.05f, 0.05f, 0.69f);
+    colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.29f, 0.31f, 0.35f, 1.00f);
+    colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.36f, 0.39f, 0.45f, 1.00f);
+    colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.46f, 0.52f, 0.64f, 1.00f);
+    colors[ImGuiCol_CheckMark] = ImVec4(0.20f, 0.42f, 0.94f, 1.00f);
+    colors[ImGuiCol_SliderGrab] = ImVec4(0.43f, 0.57f, 0.91f, 1.00f);
+    colors[ImGuiCol_SliderGrabActive] = ImVec4(0.74f, 0.82f, 1.00f, 1.00f);
+    colors[ImGuiCol_Button] = ImVec4(0.26f, 0.46f, 0.98f, 0.40f);
+    colors[ImGuiCol_ButtonHovered] = ImVec4(0.26f, 0.46f, 0.98f, 1.00f);
+    colors[ImGuiCol_ButtonActive] = ImVec4(0.51f, 0.64f, 0.99f, 1.00f);
+    colors[ImGuiCol_Header] = ImVec4(0.26f, 0.46f, 0.98f, 0.40f);
+    colors[ImGuiCol_HeaderHovered] = ImVec4(0.26f, 0.46f, 0.98f, 0.80f);
+    colors[ImGuiCol_HeaderActive] = ImVec4(0.26f, 0.48f, 0.98f, 1.00f);
+    colors[ImGuiCol_Separator] = ImVec4(0.43f, 0.43f, 0.50f, 0.50f);
+    colors[ImGuiCol_SeparatorHovered] = ImVec4(0.10f, 0.40f, 0.75f, 0.78f);
+    colors[ImGuiCol_SeparatorActive] = ImVec4(0.10f, 0.40f, 0.75f, 1.00f);
+    colors[ImGuiCol_ResizeGrip] = ImVec4(0.26f, 0.46f, 0.98f, 0.20f);
+    colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.26f, 0.46f, 0.98f, 0.67f);
+    colors[ImGuiCol_ResizeGripActive] = ImVec4(0.26f, 0.46f, 0.98f, 0.95f);
+    colors[ImGuiCol_TabHovered] = ImVec4(0.26f, 0.46f, 0.98f, 0.80f);
+    colors[ImGuiCol_Tab] = ImVec4(0.18f, 0.29f, 0.58f, 0.86f);
+    colors[ImGuiCol_TabSelected] = ImVec4(0.20f, 0.33f, 0.68f, 1.00f);
+    colors[ImGuiCol_TabSelectedOverline] = ImVec4(0.26f, 0.46f, 0.98f, 1.00f);
+    colors[ImGuiCol_TabDimmed] = ImVec4(0.07f, 0.09f, 0.15f, 0.97f);
+    colors[ImGuiCol_TabDimmedSelected] = ImVec4(0.14f, 0.22f, 0.42f, 1.00f);
+    colors[ImGuiCol_TabDimmedSelectedOverline] = ImVec4(0.50f, 0.50f, 0.50f, 0.00f);
+    colors[ImGuiCol_DockingPreview] = ImVec4(0.26f, 0.46f, 0.98f, 0.70f);
+    colors[ImGuiCol_DockingEmptyBg] = ImVec4(0.20f, 0.20f, 0.20f, 1.00f);
+    colors[ImGuiCol_PlotLines] = ImVec4(0.61f, 0.61f, 0.61f, 1.00f);
+    colors[ImGuiCol_PlotLinesHovered] = ImVec4(1.00f, 0.43f, 0.35f, 1.00f);
+    colors[ImGuiCol_PlotHistogram] = ImVec4(0.90f, 0.53f, 0.00f, 1.00f);
+    colors[ImGuiCol_PlotHistogramHovered] = ImVec4(1.00f, 0.67f, 0.25f, 1.00f);
+    colors[ImGuiCol_TableHeaderBg] = ImVec4(0.19f, 0.19f, 0.20f, 1.00f);
+    colors[ImGuiCol_TableBorderStrong] = ImVec4(0.31f, 0.31f, 0.35f, 1.00f);
+    colors[ImGuiCol_TableBorderLight] = ImVec4(0.23f, 0.23f, 0.25f, 1.00f);
+    colors[ImGuiCol_TableRowBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    colors[ImGuiCol_TableRowBgAlt] = ImVec4(1.00f, 1.00f, 1.00f, 0.06f);
+    colors[ImGuiCol_TextLink] = ImVec4(0.37f, 0.54f, 1.00f, 1.00f);
+    colors[ImGuiCol_TextSelectedBg] = ImVec4(0.43f, 0.59f, 0.98f, 0.43f);
+    colors[ImGuiCol_DragDropTarget] = ImVec4(0.97f, 0.60f, 0.19f, 0.90f);
+    colors[ImGuiCol_NavCursor] = ImVec4(0.26f, 0.46f, 0.98f, 1.00f);
+    colors[ImGuiCol_NavWindowingHighlight] = ImVec4(1.00f, 1.00f, 1.00f, 0.70f);
+    colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.20f);
+    colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.07f, 0.07f, 0.07f, 0.35f);
+
+    return style;
+}
+
+void App::ReloadFonts(float displayScale) {
+    // Load Fonts
+    // - If no fonts are loaded, dear imgui will use the default font. You can also load multiple fonts and use
+    // ImGui::PushFont()/PopFont() to select them.
+    // - AddFontFromFileTTF() will return the ImFont* so you can store it if you need to select the font among
+    // multiple.
+    // - If the file cannot be loaded, the function will return a nullptr. Please handle those errors in your
+    // application (e.g. use an assertion, or display an error and quit).
+    // - The fonts will be rasterized at a given size (w/ oversampling) and stored into a texture when calling
+    // ImFontAtlas::Build()/GetTexDataAsXXXX(), which ImGui_ImplXXXX_NewFrame below will call.
+    // - Use '#define IMGUI_ENABLE_FREETYPE' in your imconfig file to use Freetype for higher quality font
+    // rendering.
+    // - Read 'docs/FONTS.md' for more instructions and details.
+    // - Remember that in C/C++ if you want to include a backslash \ in a string literal you need to write a double
+    // backslash \\ !
+    // - Our Emscripten build process allows embedding fonts to be accessible at runtime from the "fonts/" folder.
+    // See Makefile.emscripten for details. io.Fonts->AddFontDefault();
+    // io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\segoeui.ttf", 18.0f);
+    // io.Fonts->AddFontFromFileTTF("../../misc/fonts/DroidSans.ttf", 16.0f);
+    // io.Fonts->AddFontFromFileTTF("../../misc/fonts/Roboto-Medium.ttf", 16.0f);
+    // io.Fonts->AddFontFromFileTTF("../../misc/fonts/Cousine-Regular.ttf", 15.0f);
+    // ImFont* font = io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\ArialUni.ttf", 18.0f, nullptr,
+    // io.Fonts->GetGlyphRangesJapanese()); IM_ASSERT(font != nullptr);
+    // io.Fonts->Build();
+    ImGuiIO &io = ImGui::GetIO();
+
+    ImFontConfig config;
+    config.FontDataOwnedByAtlas = false;
+    // TODO: config.MergeMode = true; to merge multiple fonts into one; useful for combining latin + JP + icons
+
+    ImVector<ImWchar> ranges;
+    ImFontGlyphRangesBuilder builder;
+    builder.AddRanges(io.Fonts->GetGlyphRangesDefault());
+    // builder.AddRanges(io.Fonts->GetGlyphRangesChineseFull());
+    // builder.AddRanges(io.Fonts->GetGlyphRangesCyrillic());
+    // builder.AddRanges(io.Fonts->GetGlyphRangesGreek());
+    // builder.AddRanges(io.Fonts->GetGlyphRangesJapanese());
+    // builder.AddRanges(io.Fonts->GetGlyphRangesKorean());
+    // builder.AddRanges(io.Fonts->GetGlyphRangesThai());
+    // builder.AddRanges(io.Fonts->GetGlyphRangesVietnamese());
+    builder.AddChar(0x2014); // Em-dash
+    builder.AddChar(0x2190); // Left arrow
+    builder.AddChar(0x2191); // Up arrow
+    builder.AddChar(0x2192); // Right arrow
+    builder.AddChar(0x2193); // Down arrow
+    builder.BuildRanges(&ranges);
+
+    // Get embedded file system
+    auto embedfs = cmrc::Ymir_sdl3_rc::get_filesystem();
+
+    // Reload fonts
+    io.Fonts->Clear();
+
+    auto loadFont = [&](const char *path, float size) {
+        cmrc::file file = embedfs.open(path);
+        return io.Fonts->AddFontFromMemoryTTF((void *)file.begin(), file.size(), size, &config, ranges.Data);
+    };
+
+    m_context.fonts.sansSerif.small.regular = loadFont("fonts/SplineSans-Medium.ttf", 14 * displayScale);
+    m_context.fonts.sansSerif.small.bold = loadFont("fonts/SplineSans-Bold.ttf", 14 * displayScale);
+    m_context.fonts.sansSerif.medium.regular = loadFont("fonts/SplineSans-Medium.ttf", 16 * displayScale);
+    m_context.fonts.sansSerif.medium.bold = loadFont("fonts/SplineSans-Bold.ttf", 16 * displayScale);
+    m_context.fonts.sansSerif.large.regular = loadFont("fonts/SplineSans-Medium.ttf", 20 * displayScale);
+    m_context.fonts.sansSerif.large.bold = loadFont("fonts/SplineSans-Bold.ttf", 20 * displayScale);
+    m_context.fonts.sansSerif.xlarge.regular = loadFont("fonts/SplineSans-Medium.ttf", 28 * displayScale);
+    m_context.fonts.sansSerif.xlarge.bold = loadFont("fonts/SplineSans-Bold.ttf", 28 * displayScale);
+
+    m_context.fonts.monospace.small.regular = loadFont("fonts/SplineSansMono-Medium.ttf", 14 * displayScale);
+    m_context.fonts.monospace.small.bold = loadFont("fonts/SplineSansMono-Bold.ttf", 14 * displayScale);
+    m_context.fonts.monospace.medium.regular = loadFont("fonts/SplineSansMono-Medium.ttf", 16 * displayScale);
+    m_context.fonts.monospace.medium.bold = loadFont("fonts/SplineSansMono-Bold.ttf", 16 * displayScale);
+    m_context.fonts.monospace.large.regular = loadFont("fonts/SplineSansMono-Medium.ttf", 20 * displayScale);
+    m_context.fonts.monospace.large.bold = loadFont("fonts/SplineSansMono-Bold.ttf", 20 * displayScale);
+    m_context.fonts.monospace.xlarge.regular = loadFont("fonts/SplineSansMono-Medium.ttf", 28 * displayScale);
+    m_context.fonts.monospace.xlarge.bold = loadFont("fonts/SplineSansMono-Bold.ttf", 28 * displayScale);
+
+    m_context.fonts.display.small = loadFont("fonts/ZenDots-Regular.ttf", 24 * displayScale);
+    m_context.fonts.display.large = loadFont("fonts/ZenDots-Regular.ttf", 64 * displayScale);
+
+    io.Fonts->Build();
+
+    io.FontDefault = m_context.fonts.sansSerif.medium.regular;
+}
+
 template <int port>
 void App::ReadPeripheral(ymir::peripheral::PeripheralReport &report) {
     // TODO: this is the appropriate location to capture inputs for a movie recording
@@ -2773,6 +2794,10 @@ void App::LoadSaveStates() {
                 archive(state);
             } catch (const cereal::Exception &e) {
                 devlog::error<grp::base>("Could not load save state from {}: {}", statePath, e.what());
+            } catch (const std::exception &e) {
+                devlog::error<grp::base>("Could not load save state from {}: {}", statePath, e.what());
+            } catch (...) {
+                devlog::error<grp::base>("Could not load save state from {}: unspecified error", statePath);
             }
         } else {
             m_context.saveStates[slot].reset();

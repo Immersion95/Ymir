@@ -296,10 +296,20 @@ target_precompile_headers(ymir-core
 )
 
 ## Define version macros
-target_add_version_defines(ymir-core)
+if (Ymir_DEV_BUILD)
+    set(Ymir_VERSION_SUFFIX "-dev")
+else ()
+    set(Ymir_VERSION_SUFFIX "")
+endif ()
+target_compile_definitions(ymir-core PUBLIC Ymir_VERSION="${Ymir_VERSION}${Ymir_VERSION_SUFFIX}")
+target_compile_definitions(ymir-core PUBLIC Ymir_VERSION_MAJOR=${Ymir_VERSION_MAJOR}u)
+target_compile_definitions(ymir-core PUBLIC Ymir_VERSION_MINOR=${Ymir_VERSION_MINOR}u)
+target_compile_definitions(ymir-core PUBLIC Ymir_VERSION_PATCH=${Ymir_VERSION_PATCH}u)
+target_compile_definitions(ymir-core PUBLIC Ymir_VERSION_SUFFIX="${Ymir_VERSION_SUFFIX}")
 
 ## Define additional macros
 target_compile_definitions(ymir-core PUBLIC "Ymir_ENABLE_DEVLOG=$<BOOL:${Ymir_ENABLE_DEVLOG}>")
+target_compile_definitions(ymir-core PUBLIC "Ymir_DEV_BUILD=$<BOOL:${Ymir_DEV_BUILD}>")
 target_compile_definitions(ymir-core PUBLIC "TOML_EXCEPTIONS=0")
 
 ## Generate the export header and attach it to the target

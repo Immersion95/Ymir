@@ -1,7 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 project(Ymir VERSION 0.1.4)
 
-include(cmake/AddVersionDefines.cmake)
 include(cmake/CMakeRC.cmake)
 include(cmake/CopyRuntimeDLLs.cmake)
 
@@ -13,12 +12,19 @@ include(cmake/CopyRuntimeDLLs.cmake)
 string(COMPARE EQUAL "${CMAKE_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}" is_top_level)
 
 option(Ymir_INCLUDE_PACKAGING "Include packaging rules for Ymir" "${is_top_level}")
+option(Ymir_DEV_BUILD "Mark as a development build" ON)
 option(Ymir_ENABLE_TESTS "Enable tests for Ymir" "${is_top_level}")
 option(Ymir_ENABLE_SANDBOX "Compile the sandbox app" "${is_top_level}")
 option(Ymir_ENABLE_YMDASM "Compile the disassembly tool" "${is_top_level}")
 option(Ymir_ENABLE_IPO "Enable IPO / LTO for Ymir" ON)
-option(Ymir_ENABLE_DEVLOG "Enable development logs" ON)
+option(Ymir_ENABLE_DEVLOG "Enable development logs" ${Ymir_DEV_BUILD})
 option(Ymir_ENABLE_IMGUI_DEMO "Enable ImGui demo window" ON)
+
+if (Ymir_DEV_BUILD)
+    message(STATUS "Ymir: Development build")
+else ()
+    message(STATUS "Ymir: Release build")
+endif ()
 message(STATUS "Ymir: Devlog ${Ymir_ENABLE_DEVLOG}")
 
 # Detect target architectures

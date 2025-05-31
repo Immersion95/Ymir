@@ -11,6 +11,12 @@
 
 #include <cassert>
 
+#if defined(_M_X64) || defined(__x86_64__)
+    #include <immintrin.h>
+#elif defined(_M_ARM64) || defined(__aarch64__)
+    #include <arm_neon.h>
+#endif
+
 namespace ymir::vdp {
 
 namespace grp {
@@ -1254,6 +1260,13 @@ void VDP::BeginHPhaseVBlankOut() {
         devlog::trace<grp::base>("## HBlank half + VBlank OUT  FCM={:d} FCT={:d} manualswap={:d} PTM={:d}",
                                  m_VDP1.fbSwapMode, m_VDP1.fbSwapTrigger, m_VDP1.fbManualSwap, m_VDP1.plotTrigger);
 
+        // FIXME: this breaks several games:
+        // - After Burner II and OutRun: erases data used by VDP2 graphics tiles
+        // - Powerslave/Exhumed: intro video flashes light blue every other frame
+        //
+        // Without this, Mickey Mouse/Donald Duck don't clear sprites on some screens (e.g. Donald Duck's items menu)
+
+        /*
         // Erase frame if manually requested in previous frame
         if (m_VDP1RenderContext.erase) {
             m_VDP1RenderContext.erase = false;
@@ -1269,6 +1282,7 @@ void VDP::BeginHPhaseVBlankOut() {
             m_VDP1.fbManualErase = false;
             m_VDP1RenderContext.erase = true;
         }
+        */
 
         // Swap framebuffer in manual swap requested or in 1-cycle mode
         if (!m_VDP1.fbSwapMode || m_VDP1.fbManualSwap) {
@@ -1582,6 +1596,17 @@ FORCE_INLINE void VDP::VDP1EraseFramebuffer() {
 
 FORCE_INLINE void VDP::VDP1SwapFramebuffer() {
     devlog::trace<grp::vdp1_render>("Swapping framebuffers - draw {}, display {}", m_displayFB, m_displayFB ^ 1);
+
+    // FIXME: FCM=1 FCT=0 should erase regardless of framebuffer swap, otherwise I Love Mickey Mouse/Donald Duck leaves
+    // behind sprites in some screens
+    if (m_VDP1.fbManualErase) {
+        m_VDP1.fbManualErase = false;
+        if (m_threadedVDPRendering) {
+            m_VDPRenderContext.EnqueueEvent(VDPRenderEvent::VDP1EraseFramebuffer());
+        } else {
+            VDP1EraseFramebuffer();
+        }
+    }
 
     if (m_threadedVDPRendering) {
         m_VDPRenderContext.EnqueueEvent(VDPRenderEvent::VDP1SwapFramebuffer());
@@ -3165,12 +3190,12 @@ NO_INLINE void VDP::VDP2DrawSpriteLayer(uint32 y) {
         }();
 
         const SpriteParams &params = regs2.spriteParams;
-        auto &pixel = layerState.pixels[xx];
         auto &attr = spriteLayerState.attrs[xx];
 
         util::ScopeGuard sgDoublePixel{[&] {
             if (doubleResH) {
-                layerState.pixels[xx + 1] = pixel;
+                auto pixel = layerState.pixels.GetPixel(xx);
+                layerState.pixels.SetPixel(xx + 1, pixel);
                 spriteLayerState.attrs[xx + 1] = attr;
             }
         }};
@@ -3179,9 +3204,10 @@ NO_INLINE void VDP::VDP2DrawSpriteLayer(uint32 y) {
             const uint16 spriteDataValue = util::ReadBE<uint16>(&spriteFB[(spriteFBOffset * sizeof(uint16)) & 0x3FFFE]);
             if (bit::test<15>(spriteDataValue)) {
                 // RGB data
-                pixel.color = ConvertRGB555to888(Color555{spriteDataValue});
-                pixel.transparent = false;
-                pixel.priority = params.priorities[0];
+                layerState.pixels.color[xx] = ConvertRGB555to888(Color555{spriteDataValue});
+                layerState.pixels.transparent[xx] = false;
+                layerState.pixels.priority[xx] = params.priorities[0];
+
                 attr.colorCalcRatio = params.colorCalcRatios[0];
                 attr.shadowOrWindow = false;
                 attr.normalShadow = false;
@@ -3192,9 +3218,10 @@ NO_INLINE void VDP::VDP2DrawSpriteLayer(uint32 y) {
         // Palette data
         const SpriteData spriteData = VDP2FetchSpriteData(spriteFBOffset);
         const uint32 colorIndex = params.colorDataOffset + spriteData.colorData;
-        pixel.color = VDP2FetchCRAMColor<colorMode>(0, colorIndex);
-        pixel.transparent = spriteData.colorData == 0;
-        pixel.priority = params.priorities[spriteData.priority];
+        layerState.pixels.color[xx] = VDP2FetchCRAMColor<colorMode>(0, colorIndex);
+        layerState.pixels.transparent[xx] = spriteData.colorData == 0;
+        layerState.pixels.priority[xx] = params.priorities[spriteData.priority];
+
         attr.colorCalcRatio = params.colorCalcRatios[spriteData.colorCalcRatio];
         attr.shadowOrWindow = spriteData.shadowOrWindow;
         attr.normalShadow = spriteData.normalShadow;
@@ -3361,8 +3388,712 @@ static const auto kColorOffsetLUT = [] {
     return arr;
 }();
 
+// Tests if an array of uint8 values are all zeroes
+FORCE_INLINE bool AllZeroU8(std::span<const uint8> values) {
+
+#if defined(_M_X64) || defined(__x86_64__)
+
+    #if defined(__AVX__)
+    // 32 at a time
+    for (; values.size() >= 32; values = values.subspan(32)) {
+        const __m256i vec32 = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(values.data()));
+
+        // Test if all bits are 0
+        if (!_mm256_testz_si256(vec32, vec32)) {
+            return false;
+        }
+    }
+    #endif
+
+    #if defined(__SSE2__)
+    // 16 at a time
+    for (; values.size() >= 16; values = values.subspan(16)) {
+        __m128i vec16 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(values.data()));
+
+        // Compare to zero
+        vec16 = _mm_cmpeq_epi8(vec16, _mm_setzero_si128());
+
+        // Extract MSB all into a 16-bit mask, if any bit is set, then we have a true value
+        if (_mm_movemask_epi8(vec16) != 0x0) {
+            return false;
+        }
+    }
+    #endif
+#elif defined(_M_ARM64) || defined(__aarch64__)
+    // 64 at a time
+    for (; values.size() >= 64; values = values.subspan(64)) {
+        const uint8x16x4_t vec64 = vld1q_u8_x4(reinterpret_cast<const uint8 *>(values.data()));
+
+        // If the largest value is not zero, we have a true value
+        if ((vmaxvq_u8(vec64.val[0]) != 0u) || (vmaxvq_u8(vec64.val[1]) != 0u) || (vmaxvq_u8(vec64.val[2]) != 0u) ||
+            (vmaxvq_u8(vec64.val[3]) != 0u)) {
+            return false;
+        }
+    }
+
+    // 16 at a time
+    for (; values.size() >= 16; values = values.subspan(16)) {
+        const uint8x16_t vec16 = vld1q_u8(reinterpret_cast<const uint8 *>(values.data()));
+
+        // If the largest value is not zero, we have a true value
+        if (vmaxvq_u8(vec16) != 0u) {
+            return false;
+        }
+    }
+#elif defined(__clang__) || defined(__GNUC__)
+    // 16 at a time
+    for (; values.size() >= sizeof(__int128); values = values.subspan(sizeof(__int128))) {
+        const __int128 &vec16 = *reinterpret_cast<const __int128 *>(values.data());
+
+        if (vec16 != __int128(0)) {
+            return false;
+        }
+    }
+#endif
+
+    // 8 at a time
+    for (; values.size() >= sizeof(uint64); values = values.subspan(sizeof(uint64))) {
+        const uint64 &vec8 = *reinterpret_cast<const uint64 *>(values.data());
+
+        if (vec8 != 0ull) {
+            return false;
+        }
+    }
+
+    // 4 at a time
+    for (; values.size() >= sizeof(uint32); values = values.subspan(sizeof(uint32))) {
+        const uint32 &vec4 = *reinterpret_cast<const uint32 *>(values.data());
+
+        if (vec4 != 0u) {
+            return false;
+        }
+    }
+
+    for (const uint8 &value : values) {
+        if (value != 0u) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Tests if an array of bool values are all true
+FORCE_INLINE bool AllBool(std::span<const bool> values) {
+
+#if defined(_M_X64) || defined(__x86_64__)
+    #if defined(__AVX__)
+    // 32 at a time
+    for (; values.size() >= 32; values = values.subspan(32)) {
+        __m256i vec32 = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(values.data()));
+
+        // Move bit 0 into the MSB
+        vec32 = _mm256_slli_epi64(vec32, 7);
+
+        // Extract 32 MSBs into a 32-bit mask, if any bit is zero, then we have a false value
+        if (_mm256_movemask_epi8(vec32) != 0xFFFF'FFFF) {
+            return false;
+        }
+    }
+    #endif
+
+    #if defined(__SSE2__)
+    // 16 at a time
+    for (; values.size() >= 16; values = values.subspan(16)) {
+        __m128i vec16 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(values.data()));
+
+        // Move bit 0 into the MSB
+        vec16 = _mm_slli_epi64(vec16, 7);
+
+        // Extract 16 MSBs into a 32-bit mask, if any bit is zero, then we have a false value
+        if (_mm_movemask_epi8(vec16) != 0xFFFF) {
+            return false;
+        }
+    }
+    #endif
+#elif defined(_M_ARM64) || defined(__aarch64__)
+    // 64 at a time
+    for (; values.size() >= 64; values = values.subspan(64)) {
+        const uint8x16x4_t vec64 = vld1q_u8_x4(reinterpret_cast<const uint8 *>(values.data()));
+
+        // If the smallest value is zero, then we have a false value
+        if ((vminvq_u8(vec64.val[0]) == 0u) || (vminvq_u8(vec64.val[1]) == 0u) || (vminvq_u8(vec64.val[2]) == 0u) ||
+            (vminvq_u8(vec64.val[3]) == 0u)) {
+            return false;
+        }
+    }
+    // 16 at a time
+    for (; values.size() >= 16; values = values.subspan(16)) {
+        const uint8x16_t vec16 = vld1q_u8(reinterpret_cast<const uint8 *>(values.data()));
+
+        // If the smallest value is zero, then we have a false value
+        if (vminvq_u8(vec16) == 0u) {
+            return false;
+        }
+    }
+#elif defined(__clang__) || defined(__GNUC__)
+    // 16 at a time
+    for (; values.size() >= sizeof(__int128); values = values.subspan(sizeof(__int128))) {
+        const __int128 &vec16 = *reinterpret_cast<const __int128 *>(values.data());
+
+        if (vec16 != __int128((__int128(0x01'01'01'01'01'01'01'01) << 64) | 0x01'01'01'01'01'01'01'01)) {
+            return false;
+        }
+    }
+#endif
+
+    // 8 at a time
+    for (; values.size() >= sizeof(uint64); values = values.subspan(sizeof(uint64))) {
+        const uint64 &vec8 = *reinterpret_cast<const uint64 *>(values.data());
+
+        if (vec8 != 0x01'01'01'01'01'01'01'01) {
+            return false;
+        }
+    }
+
+    // 4 at a time
+    for (; values.size() >= sizeof(uint32); values = values.subspan(sizeof(uint32))) {
+        const uint32 &vec4 = *reinterpret_cast<const uint32 *>(values.data());
+
+        if (vec4 != 0x01'01'01'01) {
+            return false;
+        }
+    }
+
+    for (const bool &value : values) {
+        if (!value) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Tests if an any element in an array of bools are true
+FORCE_INLINE bool AnyBool(std::span<const bool> values) {
+#if defined(_M_X64) || defined(__x86_64__)
+    #if defined(__AVX__)
+    // 32 at a time
+    for (; values.size() >= 32; values = values.subspan(32)) {
+        __m256i vec32 = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(values.data()));
+
+        // Move bit 0 into the MSB
+        vec32 = _mm256_slli_epi64(vec32, 7);
+
+        // Extract MSB into a 32-bit mask, if any bit is set, then we have a true value
+        if (_mm256_movemask_epi8(vec32) != 0u) {
+            return true;
+        }
+    }
+    #endif
+    #if defined(__SSE2__)
+    // 16 at a time
+    for (; values.size() >= 16; values = values.subspan(16)) {
+        __m128i vec16 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(values.data()));
+
+        // Move bit 0 into the MSB
+        vec16 = _mm_slli_epi64(vec16, 7);
+
+        // Extract MSB into a 16-bit mask, if any bit is set, then we have a true value
+        if (_mm_movemask_epi8(vec16) != 0u) {
+            return true;
+        }
+    }
+    #endif
+#elif defined(_M_ARM64) || defined(__aarch64__)
+    // 64 at a time
+    for (; values.size() >= 64; values = values.subspan(64)) {
+        const uint8x16x4_t vec64 = vld1q_u8_x4(reinterpret_cast<const uint8 *>(values.data()));
+
+        // If the smallest value is not zero, then we have a true value
+        if ((vminvq_u8(vec64.val[0]) != 0u) || (vminvq_u8(vec64.val[1]) != 0u) || (vminvq_u8(vec64.val[2]) != 0u) ||
+            (vminvq_u8(vec64.val[3]) != 0u)) {
+            return true;
+        }
+    }
+
+    // 16 at a time
+    for (; values.size() >= 16; values = values.subspan(16)) {
+        const uint8x16_t vec16 = vld1q_u8(reinterpret_cast<const uint8 *>(values.data()));
+
+        // If the smallest value is not zero, then we have a true value
+        if (vminvq_u8(vec16) != 0u) {
+            return true;
+        }
+    }
+#elif defined(__clang__) || defined(__GNUC__)
+    // 16 at a time
+    for (; values.size() >= sizeof(__int128); values = values.subspan(sizeof(__int128))) {
+        const __int128 &vec16 = *reinterpret_cast<const __int128 *>(values.data());
+
+        if (vec16) {
+            return true;
+        }
+    }
+#endif
+
+    // 8 at a time
+    for (; values.size() >= sizeof(uint64); values = values.subspan(sizeof(uint64))) {
+        const uint64 &vec8 = *reinterpret_cast<const uint64 *>(values.data());
+
+        if (vec8) {
+            return true;
+        }
+    }
+
+    // 4 at a time
+    for (; values.size() >= sizeof(uint32); values = values.subspan(sizeof(uint32))) {
+        const uint32 &vec4 = *reinterpret_cast<const uint32 *>(values.data());
+
+        if (vec4) {
+            return true;
+        }
+    }
+
+    for (const bool &value : values) {
+        if (value) {
+            return true;
+        }
+    }
+    return false;
+}
+
+FORCE_INLINE void Color888ShadowMasked(const std::span<Color888> pixels, const std::span<const bool, kMaxResH> mask) {
+    size_t i = 0;
+
+#if defined(_M_X64) || defined(__x86_64__)
+    #if defined(__AVX2__)
+    // Eight pixels at a time
+    for (; (i + 8) < pixels.size(); i += 8) {
+        // Load eight mask bytes into 32-bit lanes of 000... or 111...
+        __m256i mask_x8 = _mm256_cvtepu8_epi32(_mm_loadu_si64(mask.data() + i));
+        mask_x8 = _mm256_sub_epi32(_mm256_setzero_si256(), mask_x8);
+
+        const __m256i pixel_x8 = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(&pixels[i]));
+
+        __m256i shadowed_x8 = _mm256_srli_epi32(pixel_x8, 1);
+        shadowed_x8 = _mm256_and_si256(shadowed_x8, _mm256_set1_epi8(0x7F));
+
+        // Blend with mask
+        const __m256i dstColor_x8 = _mm256_blendv_epi8(pixel_x8, shadowed_x8, mask_x8);
+
+        // Write
+        _mm256_storeu_si256(reinterpret_cast<__m256i *>(&pixels[i]), dstColor_x8);
+    }
+    #endif
+
+    #if defined(__SSE2__)
+    // Four pixels at a time
+    for (; (i + 4) < pixels.size(); i += 4) {
+        // Load four mask values and expand each byte into 32-bit 000... or 111...
+        __m128i mask_x4 = _mm_loadu_si32(mask.data() + i);
+        mask_x4 = _mm_unpacklo_epi8(mask_x4, _mm_setzero_si128());
+        mask_x4 = _mm_unpacklo_epi16(mask_x4, _mm_setzero_si128());
+        mask_x4 = _mm_sub_epi32(_mm_setzero_si128(), mask_x4);
+
+        const __m128i pixel_x4 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(&pixels[i]));
+
+        __m128i shadowed_x4 = _mm_srli_epi64(pixel_x4, 1);
+
+        shadowed_x4 = _mm_and_si128(shadowed_x4, _mm_set1_epi8(0x7F));
+
+        // Blend with mask
+        const __m128i dstColor_x4 = _mm_or_si128(_mm_and_si128(mask_x4, shadowed_x4), _mm_andnot_ps(mask_x4, pixel_x4));
+
+        // Write
+        _mm_storeu_si128(reinterpret_cast<__m128i *>(&pixels[i]), dstColor_x4);
+    }
+    #endif
+#elif defined(_M_ARM64) || defined(__aarch64__)
+    // Four pixels at a time
+    for (; (i + 4) < pixels.size(); i += 4) {
+        // Load four mask values and expand each byte into 32-bit 000... or 111...
+        uint32x4_t mask_x4 = vld1q_lane_u32(reinterpret_cast<const uint32 *>(mask.data() + i), vdupq_n_u32(0), 0);
+        mask_x4 = vmovl_u16(vget_low_u16(vmovl_u8(vget_low_u8(mask_x4))));
+        mask_x4 = vnegq_s32(mask_x4);
+
+        const uint32x4_t pixel_x4 = vld1q_u32(reinterpret_cast<const uint32 *>(&pixels[i]));
+        const uint32x4_t shadowed_x4 = vshrq_n_u8(pixel_x4, 1);
+
+        // Blend with mask
+        const uint32x4_t dstColor_x4 = vbslq_u32(mask_x4, shadowed_x4, pixel_x4);
+
+        // Write
+        vst1q_u32(reinterpret_cast<uint32 *>(&pixels[i]), dstColor_x4);
+    }
+#endif
+
+    for (; i < pixels.size(); i++) {
+        Color888 &pixel = pixels[i];
+        if (mask[i]) {
+            pixel.u32 >>= 1;
+            pixel.u32 &= 0x7F'7F'7F'7F;
+        }
+    }
+}
+
+FORCE_INLINE void Color888SatAddMasked(const std::span<Color888> dest, const std::span<const bool, kMaxResH> mask,
+                                       const std::span<const Color888, kMaxResH> topColors,
+                                       const std::span<const Color888, kMaxResH> btmColors) {
+    size_t i = 0;
+
+#if defined(_M_X64) || defined(__x86_64__)
+
+    #if defined(__AVX2__)
+    // Eight pixels at a time
+    for (; (i + 8) < dest.size(); i += 8) {
+        // Load eight mask bytes into 32-bit lanes of 000... or 111...
+        __m256i mask_x8 = _mm256_cvtepu8_epi32(_mm_loadu_si64(mask.data() + i));
+        mask_x8 = _mm256_sub_epi32(_mm256_setzero_si256(), mask_x8);
+
+        const __m256i topColor_x8 = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(&topColors[i]));
+        const __m256i btmColor_x8 = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(&btmColors[i]));
+
+        // Pack back into 8-bit values, be sure to truncate to avoid saturation
+        __m256i dstColor_x8 = _mm256_adds_epu8(topColor_x8, btmColor_x8);
+
+        // Blend with mask
+        dstColor_x8 = _mm256_blendv_epi8(topColor_x8, dstColor_x8, mask_x8);
+
+        // Write
+        _mm256_storeu_si256(reinterpret_cast<__m256i *>(&dest[i]), dstColor_x8);
+    }
+    #endif
+
+    #if defined(__SSE2__)
+    // Four pixels at a time
+    for (; (i + 4) < dest.size(); i += 4) {
+        // Load four mask values and expand each byte into 32-bit 000... or 111...
+        __m128i mask_x4 = _mm_loadu_si32(mask.data() + i);
+        mask_x4 = _mm_unpacklo_epi8(mask_x4, _mm_setzero_si128());
+        mask_x4 = _mm_unpacklo_epi16(mask_x4, _mm_setzero_si128());
+        mask_x4 = _mm_sub_epi32(_mm_setzero_si128(), mask_x4);
+
+        const __m128i topColor_x4 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(&topColors[i]));
+        const __m128i btmColor_x4 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(&btmColors[i]));
+
+        // Saturated add
+        __m128i dstColor_x4 = _mm_adds_epu8(topColor_x4, btmColor_x4);
+
+        // Blend with mask
+        dstColor_x4 = _mm_or_si128(_mm_and_si128(mask_x4, dstColor_x4), _mm_andnot_ps(mask_x4, topColor_x4));
+
+        // Write
+        _mm_storeu_si128(reinterpret_cast<__m128i *>(&dest[i]), dstColor_x4);
+    }
+    #endif
+#elif defined(_M_ARM64) || defined(__aarch64__)
+    // Four pixels at a time
+    for (; (i + 4) < dest.size(); i += 4) {
+        // Load four mask values and expand each byte into 32-bit 000... or 111...
+        uint32x4_t mask_x4 = vld1q_lane_u32(reinterpret_cast<const uint32 *>(mask.data() + i), vdupq_n_u32(0), 0);
+        mask_x4 = vmovl_u16(vget_low_u16(vmovl_u8(vget_low_u8(mask_x4))));
+        mask_x4 = vnegq_s32(mask_x4);
+
+        const uint32x4_t topColor_x4 = vld1q_u32(reinterpret_cast<const uint32 *>(&topColors[i]));
+        const uint32x4_t btmColor_x4 = vld1q_u32(reinterpret_cast<const uint32 *>(&btmColors[i]));
+
+        // Saturated add
+        const uint32x4_t add_x4 = vqaddq_u8(topColor_x4, btmColor_x4);
+
+        // Blend with mask
+        const uint32x4_t dstColor_x4 = vbslq_u32(mask_x4, add_x4, topColor_x4);
+
+        // Write
+        vst1q_u32(reinterpret_cast<uint32 *>(&dest[i]), dstColor_x4);
+    }
+#endif
+
+    for (; i < dest.size(); i++) {
+        const Color888 &topColor = topColors[i];
+        const Color888 &btmColor = btmColors[i];
+        Color888 &dstColor = dest[i];
+        if (mask[i]) {
+            dstColor.r = std::min<uint16>(topColor.r + btmColor.r, 255u);
+            dstColor.g = std::min<uint16>(topColor.g + btmColor.g, 255u);
+            dstColor.b = std::min<uint16>(topColor.b + btmColor.b, 255u);
+        } else {
+            dstColor = topColor;
+        }
+    }
+}
+
+FORCE_INLINE void Color888CompositeRatioPerPixelMasked(const std::span<Color888> dest, const std::span<const bool> mask,
+                                                       const std::span<const Color888, kMaxResH> topColors,
+                                                       const std::span<const Color888, kMaxResH> btmColors,
+                                                       const std::span<const uint8, kMaxResH> ratios) {
+    size_t i = 0;
+
+#if defined(_M_X64) || defined(__x86_64__)
+    #if defined(__AVX2__)
+    // Eight pixels at a time
+    for (; (i + 8) < dest.size(); i += 8) {
+        // Load eightmask values and expand each byte into 32-bit 000... or 111...
+        __m256i mask_x8 = _mm256_cvtepu8_epi32(_mm_loadu_si64(mask.data() + i));
+        mask_x8 = _mm256_sub_epi32(_mm256_setzero_si256(), mask_x8);
+
+        // Load eight ratios and widen each byte into 32-bit lanes
+        // Put each byte into a 32-bit lane
+        __m256i ratio_x8 = _mm256_cvtepu8_epi32(_mm_loadu_si64(&ratios[i]));
+        // Repeat the byte
+        ratio_x8 = _mm256_mullo_epi32(ratio_x8, _mm256_set1_epi32(0x01'01'01'01));
+
+        const __m256i topColor_x8 = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(&topColors[i]));
+        const __m256i btmColor_x8 = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(&btmColors[i]));
+
+        // Expand to 16-bit values
+        __m256i ratio16lo_x8 = _mm256_unpacklo_epi8(ratio_x8, _mm256_setzero_si256());
+        __m256i ratio16hi_x8 = _mm256_unpackhi_epi8(ratio_x8, _mm256_setzero_si256());
+
+        const __m256i topColor16lo = _mm256_unpacklo_epi8(topColor_x8, _mm256_setzero_si256());
+        const __m256i btmColor16lo = _mm256_unpacklo_epi8(btmColor_x8, _mm256_setzero_si256());
+
+        const __m256i topColor16hi = _mm256_unpackhi_epi8(topColor_x8, _mm256_setzero_si256());
+        const __m256i btmColor16hi = _mm256_unpackhi_epi8(btmColor_x8, _mm256_setzero_si256());
+
+        // Lerp
+        const __m256i dstColor16lo = _mm256_add_epi16(
+            btmColor16lo,
+            _mm256_srli_epi16(_mm256_mullo_epi16(_mm256_sub_epi16(topColor16lo, btmColor16lo), ratio16lo_x8), 5));
+        const __m256i dstColor16hi = _mm256_add_epi16(
+            btmColor16hi,
+            _mm256_srli_epi16(_mm256_mullo_epi16(_mm256_sub_epi16(topColor16hi, btmColor16hi), ratio16hi_x8), 5));
+
+        // Pack back into 8-bit values, be sure to truncate to avoid saturation
+        __m256i dstColor_x8 = _mm256_packus_epi16(_mm256_and_si256(dstColor16lo, _mm256_set1_epi16(0xFF)),
+                                                  _mm256_and_si256(dstColor16hi, _mm256_set1_epi16(0xFF)));
+
+        // Blend with mask
+        dstColor_x8 = _mm256_blendv_epi8(topColor_x8, dstColor_x8, mask_x8);
+
+        // Write
+        _mm256_storeu_si256(reinterpret_cast<__m256i *>(&dest[i]), dstColor_x8);
+    }
+    #endif
+
+    #if defined(__SSE2__)
+    // Four pixels at a time
+    for (; (i + 4) < dest.size(); i += 4) {
+        // Load four mask values and expand each byte into 32-bit 000... or 111...
+        __m128i mask_x4 = _mm_loadu_si32(mask.data() + i);
+        mask_x4 = _mm_unpacklo_epi8(mask_x4, _mm_setzero_si128());
+        mask_x4 = _mm_unpacklo_epi16(mask_x4, _mm_setzero_si128());
+        mask_x4 = _mm_sub_epi32(_mm_setzero_si128(), mask_x4);
+
+        const __m128i topColor_x4 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(&topColors[i]));
+        const __m128i btmColor_x4 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(&btmColors[i]));
+
+        // Load four ratios and splat each byte into 32-bit lanes
+        __m128i ratio_x4 = _mm_loadu_si32(&ratios[i]);
+        ratio_x4 = _mm_unpacklo_epi8(ratio_x4, ratio_x4);
+        ratio_x4 = _mm_unpacklo_epi16(ratio_x4, ratio_x4);
+
+        // Expand to 16-bit values
+        const __m128i ratio16lo_x4 = _mm_unpacklo_epi8(ratio_x4, _mm_setzero_si128());
+        const __m128i ratio16hi_x4 = _mm_unpackhi_epi8(ratio_x4, _mm_setzero_si128());
+
+        const __m128i topColor16lo = _mm_unpacklo_epi8(topColor_x4, _mm_setzero_si128());
+        const __m128i btmColor16lo = _mm_unpacklo_epi8(btmColor_x4, _mm_setzero_si128());
+
+        const __m128i topColor16hi = _mm_unpackhi_epi8(topColor_x4, _mm_setzero_si128());
+        const __m128i btmColor16hi = _mm_unpackhi_epi8(btmColor_x4, _mm_setzero_si128());
+
+        // Composite
+        const __m128i dstColor16lo = _mm_add_epi16(
+            btmColor16lo, _mm_srli_epi16(_mm_mullo_epi16(_mm_sub_epi16(topColor16lo, btmColor16lo), ratio16lo_x4), 5));
+        const __m128i dstColor16hi = _mm_add_epi16(
+            btmColor16hi, _mm_srli_epi16(_mm_mullo_epi16(_mm_sub_epi16(topColor16hi, btmColor16hi), ratio16hi_x4), 5));
+
+        // Pack back into 8-bit values, be sure to truncate to avoid saturation
+        __m128i dstColor_x4 = _mm_packus_epi16(_mm_and_si128(dstColor16lo, _mm_set1_epi16(0xFF)),
+                                               _mm_and_si128(dstColor16hi, _mm_set1_epi16(0xFF)));
+
+        // Blend with mask
+        dstColor_x4 = _mm_or_si128(_mm_and_si128(mask_x4, dstColor_x4), _mm_andnot_ps(mask_x4, topColor_x4));
+
+        // Write
+        _mm_storeu_si128(reinterpret_cast<__m128i *>(&dest[i]), dstColor_x4);
+    }
+    #endif
+#elif defined(_M_ARM64) || defined(__aarch64__)
+    // Four pixels at a time
+    for (; (i + 4) < dest.size(); i += 4) {
+        // Load four mask values and expand each byte into 32-bit 000... or 111...
+        uint32x4_t mask_x4 = vld1q_lane_u32(reinterpret_cast<const uint32 *>(mask.data() + i), vdupq_n_u32(0), 0);
+        mask_x4 = vmovl_u16(vget_low_u16(vmovl_u8(vget_low_u8(mask_x4))));
+        mask_x4 = vnegq_s32(mask_x4);
+
+        // Load four ratios and splat each byte into 32-bit lanes
+        uint32x4_t ratio_x4 = vld1q_lane_u32(reinterpret_cast<const uint32 *>(ratios.data() + i), vdupq_n_u32(0), 0);
+        // 8 -> 16
+        ratio_x4 = vzip1q_u8(ratio_x4, ratio_x4);
+        // 16 -> 32
+        ratio_x4 = vzip1q_u16(ratio_x4, ratio_x4);
+
+        const uint32x4_t topColor_x4 = vld1q_u32(reinterpret_cast<const uint32 *>(&topColors[i]));
+        const uint32x4_t btmColor_x4 = vld1q_u32(reinterpret_cast<const uint32 *>(&btmColors[i]));
+
+        // Composite
+        int8x16_t composite_x4 = vsubq_s8(topColor_x4, btmColor_x4);
+
+        const int16x8_t composite16lo = vmull_u8(vget_low_u8(composite_x4), vget_low_u8(ratio_x4));
+        const int16x8_t composite16hi = vmull_high_u8(composite_x4, ratio_x4);
+
+        composite_x4 = vshrn_high_n_u16(vshrn_n_u16(composite16lo, 5), composite16hi, 5);
+        composite_x4 = vaddq_u8(btmColor_x4, composite_x4);
+
+        // Blend with mask
+        const uint32x4_t dstColor_x4 = vbslq_u32(mask_x4, composite_x4, topColor_x4);
+
+        // Write
+        vst1q_u32(reinterpret_cast<uint32 *>(&dest[i]), dstColor_x4);
+    }
+#endif
+
+    for (; i < dest.size(); i++) {
+        const Color888 &topColor = topColors[i];
+        const Color888 &btmColor = btmColors[i];
+        const uint8 &ratio = ratios[i];
+        Color888 &dstColor = dest[i];
+        if (mask[i]) {
+            dstColor.r = btmColor.r + ((int)topColor.r - (int)btmColor.r) * ratio / 32;
+            dstColor.g = btmColor.g + ((int)topColor.g - (int)btmColor.g) * ratio / 32;
+            dstColor.b = btmColor.b + ((int)topColor.b - (int)btmColor.b) * ratio / 32;
+        } else {
+            dstColor = topColor;
+        }
+    }
+}
+
+FORCE_INLINE void Color888CompositeRatioMasked(const std::span<Color888> dest, const std::span<const bool> mask,
+                                               const std::span<const Color888, kMaxResH> topColors,
+                                               const std::span<const Color888, kMaxResH> btmColors, uint8 ratio) {
+    size_t i = 0;
+
+#if defined(_M_X64) || defined(__x86_64__)
+    #if defined(__AVX2__)
+    // Eight pixels at a time
+    const __m256i ratio_x8 = _mm256_set1_epi32(0x01'01'01'01 * ratio);
+    // Expand to 16-bit values
+    const __m256i ratio16lo_x8 = _mm256_unpacklo_epi8(ratio_x8, _mm256_setzero_si256());
+    const __m256i ratio16hi_x8 = _mm256_unpackhi_epi8(ratio_x8, _mm256_setzero_si256());
+    for (; (i + 8) < dest.size(); i += 8) {
+        // Load eight mask values and expand each byte into 32-bit 000... or 111...
+        __m256i mask_x8 = _mm256_cvtepu8_epi32(_mm_loadu_si64(mask.data() + i));
+        mask_x8 = _mm256_sub_epi32(_mm256_setzero_si256(), mask_x8);
+
+        const __m256i topColor_x8 = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(&topColors[i]));
+        const __m256i btmColor_x8 = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(&btmColors[i]));
+
+        const __m256i topColor16lo = _mm256_unpacklo_epi8(topColor_x8, _mm256_setzero_si256());
+        const __m256i btmColor16lo = _mm256_unpacklo_epi8(btmColor_x8, _mm256_setzero_si256());
+
+        const __m256i topColor16hi = _mm256_unpackhi_epi8(topColor_x8, _mm256_setzero_si256());
+        const __m256i btmColor16hi = _mm256_unpackhi_epi8(btmColor_x8, _mm256_setzero_si256());
+
+        // Lerp
+        const __m256i dstColor16lo = _mm256_add_epi16(
+            btmColor16lo,
+            _mm256_srli_epi16(_mm256_mullo_epi16(_mm256_sub_epi16(topColor16lo, btmColor16lo), ratio16lo_x8), 5));
+        const __m256i dstColor16hi = _mm256_add_epi16(
+            btmColor16hi,
+            _mm256_srli_epi16(_mm256_mullo_epi16(_mm256_sub_epi16(topColor16hi, btmColor16hi), ratio16hi_x8), 5));
+
+        // Pack back into 8-bit values, be sure to truncate to avoid saturation
+        __m256i dstColor_x8 = _mm256_packus_epi16(_mm256_and_si256(dstColor16lo, _mm256_set1_epi16(0xFF)),
+                                                  _mm256_and_si256(dstColor16hi, _mm256_set1_epi16(0xFF)));
+
+        // Blend with mask
+        dstColor_x8 = _mm256_blendv_epi8(topColor_x8, dstColor_x8, mask_x8);
+
+        // Write
+        _mm256_storeu_si256(reinterpret_cast<__m256i *>(&dest[i]), dstColor_x8);
+    }
+    #endif
+
+    #if defined(__SSE2__)
+    // Four pixels at a time
+    const __m128i ratio_x4 = _mm_set1_epi32(0x01'01'01'01 * ratio);
+    // Expand to 16-bit values
+    const __m128i ratio16lo_x4 = _mm_unpacklo_epi8(ratio_x4, _mm_setzero_si128());
+    const __m128i ratio16hi_x4 = _mm_unpackhi_epi8(ratio_x4, _mm_setzero_si128());
+    for (; (i + 4) < dest.size(); i += 4) {
+        // Load four mask values and expand each byte into 32-bit 000... or 111...
+        __m128i mask_x4 = _mm_loadu_si32(mask.data() + i);
+        mask_x4 = _mm_unpacklo_epi8(mask_x4, _mm_setzero_si128());
+        mask_x4 = _mm_unpacklo_epi16(mask_x4, _mm_setzero_si128());
+        mask_x4 = _mm_sub_epi32(_mm_setzero_si128(), mask_x4);
+
+        const __m128i topColor_x4 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(&topColors[i]));
+        const __m128i btmColor_x4 = _mm_loadu_si128(reinterpret_cast<const __m128i *>(&btmColors[i]));
+
+        const __m128i topColor16lo = _mm_unpacklo_epi8(topColor_x4, _mm_setzero_si128());
+        const __m128i btmColor16lo = _mm_unpacklo_epi8(btmColor_x4, _mm_setzero_si128());
+
+        const __m128i topColor16hi = _mm_unpackhi_epi8(topColor_x4, _mm_setzero_si128());
+        const __m128i btmColor16hi = _mm_unpackhi_epi8(btmColor_x4, _mm_setzero_si128());
+
+        // Composite
+        const __m128i dstColor16lo = _mm_add_epi16(
+            btmColor16lo, _mm_srli_epi16(_mm_mullo_epi16(_mm_sub_epi16(topColor16lo, btmColor16lo), ratio16lo_x4), 5));
+        const __m128i dstColor16hi = _mm_add_epi16(
+            btmColor16hi, _mm_srli_epi16(_mm_mullo_epi16(_mm_sub_epi16(topColor16hi, btmColor16hi), ratio16hi_x4), 5));
+
+        // Pack back into 8-bit values, be sure to truncate to avoid saturation
+        __m128i dstColor_x4 = _mm_packus_epi16(_mm_and_si128(dstColor16lo, _mm_set1_epi16(0xFF)),
+                                               _mm_and_si128(dstColor16hi, _mm_set1_epi16(0xFF)));
+
+        // Blend with mask
+        dstColor_x4 = _mm_or_si128(_mm_and_si128(mask_x4, dstColor_x4), _mm_andnot_ps(mask_x4, topColor_x4));
+
+        // Write
+        _mm_storeu_si128(reinterpret_cast<__m128i *>(&dest[i]), dstColor_x4);
+    }
+    #endif
+#elif defined(_M_ARM64) || defined(__aarch64__)
+    // Four pixels at a time
+    const uint8x16_t ratio_x4 = vdupq_n_u8(ratio);
+    for (; (i + 4) < dest.size(); i += 4) {
+        // Load four mask values and expand each byte into 32-bit 000... or 111...
+        uint32x4_t mask_x4 = vld1q_lane_u32(reinterpret_cast<const uint32 *>(mask.data() + i), vdupq_n_u32(0), 0);
+        mask_x4 = vmovl_u16(vget_low_u16(vmovl_u8(vget_low_u8(mask_x4))));
+        mask_x4 = vnegq_s32(mask_x4);
+
+        const uint32x4_t topColor_x4 = vld1q_u32(reinterpret_cast<const uint32 *>(&topColors[i]));
+        const uint32x4_t btmColor_x4 = vld1q_u32(reinterpret_cast<const uint32 *>(&btmColors[i]));
+
+        // Composite
+        int8x16_t composite_x4 = vsubq_s8(topColor_x4, btmColor_x4);
+
+        const int16x8_t composite16lo = vmull_u8(vget_low_u8(composite_x4), vget_low_u8(ratio_x4));
+        const int16x8_t composite16hi = vmull_high_u8(composite_x4, ratio_x4);
+
+        composite_x4 = vshrn_high_n_u16(vshrn_n_u16(composite16lo, 5), composite16hi, 5);
+        composite_x4 = vaddq_u8(btmColor_x4, composite_x4);
+
+        // Blend with mask
+        const uint32x4_t dstColor_x4 = vbslq_u32(mask_x4, composite_x4, topColor_x4);
+
+        // Write
+        vst1q_u32(reinterpret_cast<uint32 *>(&dest[i]), dstColor_x4);
+    }
+#endif
+
+    for (; i < dest.size(); i++) {
+        const Color888 &topColor = topColors[i];
+        const Color888 &btmColor = btmColors[i];
+        Color888 &dstColor = dest[i];
+        if (mask[i]) {
+            dstColor.r = btmColor.r + ((int)topColor.r - (int)btmColor.r) * ratio / 32;
+            dstColor.g = btmColor.g + ((int)topColor.g - (int)btmColor.g) * ratio / 32;
+            dstColor.b = btmColor.b + ((int)topColor.b - (int)btmColor.b) * ratio / 32;
+        } else {
+            dstColor = topColor;
+        }
+    }
+}
+
 FORCE_INLINE void VDP::VDP2ComposeLine(uint32 y) {
     const VDP2Regs &regs = VDP2GetRegs();
+    const auto &colorCalcParams = regs.colorCalcParams;
 
     y = VDP2GetY(y);
 
@@ -3371,23 +4102,37 @@ FORCE_INLINE void VDP::VDP2ComposeLine(uint32 y) {
         return;
     }
 
-    uint32 *fbPtr = &m_framebuffer[y * m_HRes];
-    for (uint32 x = 0; x < m_HRes; x++) {
-        std::array<LayerIndex, 3> layers = {LYR_Back, LYR_Back, LYR_Back};
-        std::array<uint8, 3> layerPrios = {0, 0, 0};
+    // Determine layer orders
+    static constexpr std::array<LayerIndex, 3> kLayersInit{LYR_Back, LYR_Back, LYR_Back};
+    alignas(16) std::array<std::array<LayerIndex, 3>, kMaxResH> scanline_layers;
+    std::fill_n(scanline_layers.begin(), m_HRes, kLayersInit);
 
-        // Determine layer order
-        for (int layer = 0; layer < m_layerStates.size(); layer++) {
-            const LayerState &state = m_layerStates[layer];
-            if (!state.enabled) {
+    static constexpr std::array<uint8, 3> kLayerPriosInit{0, 0, 0};
+    alignas(16) std::array<std::array<uint8, 3>, kMaxResH> scanline_layerPrios;
+    std::fill_n(scanline_layerPrios.begin(), m_HRes, kLayerPriosInit);
+
+    for (int layer = 0; layer < m_layerStates.size(); layer++) {
+        const LayerState &state = m_layerStates[layer];
+        if (!state.enabled) {
+            continue;
+        }
+
+        if (AllBool(std::span{state.pixels.transparent}.first(m_HRes))) {
+            // All pixels are transparent
+            continue;
+        }
+
+        if (AllZeroU8(std::span{state.pixels.priority}.first(m_HRes))) {
+            // All priorities are zero
+            continue;
+        }
+
+        for (uint32 x = 0; x < m_HRes; x++) {
+            if (state.pixels.transparent[x]) {
                 continue;
             }
-
-            const Pixel &pixel = state.pixels[x];
-            if (pixel.transparent) {
-                continue;
-            }
-            if (pixel.priority == 0) {
+            const uint8 priority = state.pixels.priority[x];
+            if (priority == 0) {
                 continue;
             }
             if (layer == LYR_Sprite) {
@@ -3401,187 +4146,240 @@ FORCE_INLINE void VDP::VDP2ComposeLine(uint32 y) {
             // - Higher priority beats lower priority
             // - If same priority, lower Layer index beats higher Layer index
             // - layers[0] is topmost (first) layer
+            std::array<LayerIndex, 3> &layers = scanline_layers[x];
+            std::array<uint8, 3> &layerPrios = scanline_layerPrios[x];
             for (int i = 0; i < 3; i++) {
-                if (pixel.priority > layerPrios[i] || (pixel.priority == layerPrios[i] && layer < layers[i])) {
+                if (priority > layerPrios[i] || (priority == layerPrios[i] && layer < layers[i])) {
                     // Push layers back
                     for (int j = 2; j > i; j--) {
                         layers[j] = layers[j - 1];
                         layerPrios[j] = layerPrios[j - 1];
                     }
                     layers[i] = static_cast<LayerIndex>(layer);
-                    layerPrios[i] = pixel.priority;
+                    layerPrios[i] = priority;
                     break;
                 }
             }
         }
+    }
 
-        // Retrieves the color of the given layer
-        auto getLayerColor = [&](LayerIndex layer) -> Color888 {
-            if (layer == LYR_Back) {
-                return m_lineBackLayerState.backColor;
-            } else {
-                const LayerState &state = m_layerStates[layer];
-                const Pixel &pixel = state.pixels[x];
-                return pixel.color;
-            }
-        };
+    // Retrieves the color of the given layer
+    auto getLayerColor = [&](LayerIndex layer, uint32 x) -> Color888 {
+        if (layer == LYR_Back) {
+            return m_lineBackLayerState.backColor;
+        } else {
+            return m_layerStates[layer].pixels.color[x];
+        }
+    };
 
-        auto isColorCalcEnabled = [&](LayerIndex layer) {
-            if (layer == LYR_Sprite) {
-                const SpriteParams &spriteParams = regs.spriteParams;
-                if (!spriteParams.colorCalcEnable) {
-                    return false;
-                }
+    // Gather pixels for layer 0
+    alignas(16) std::array<Color888, kMaxResH> layer0Pixels;
+    for (uint32 x = 0; x < m_HRes; x++) {
+        layer0Pixels[x] = getLayerColor(scanline_layers[x][0], x);
+    }
 
-                const Pixel &pixel = m_layerStates[LYR_Sprite].pixels[x];
-
-                using enum SpriteColorCalculationCondition;
-                switch (spriteParams.colorCalcCond) {
-                case PriorityLessThanOrEqual: return pixel.priority <= spriteParams.colorCalcValue;
-                case PriorityEqual: return pixel.priority == spriteParams.colorCalcValue;
-                case PriorityGreaterThanOrEqual: return pixel.priority >= spriteParams.colorCalcValue;
-                case MsbEqualsOne: return pixel.color.msb == 1;
-                default: util::unreachable();
-                }
-            } else if (layer == LYR_Back) {
-                return regs.backScreenParams.colorCalcEnable;
-            } else {
-                return regs.bgParams[layer - LYR_RBG0].colorCalcEnable;
-            }
-        };
-
-        auto getColorCalcRatio = [&](LayerIndex layer) {
-            if (layer == LYR_Sprite) {
-                return m_spriteLayerState.attrs[x].colorCalcRatio;
-            } else if (layer == LYR_Back) {
-                return regs.backScreenParams.colorCalcRatio;
-            } else {
-                return regs.bgParams[layer - LYR_RBG0].colorCalcRatio;
-            }
-        };
-
-        auto isLineColorEnabled = [&](LayerIndex layer) {
-            if (layer == LYR_Sprite) {
-                return regs.spriteParams.lineColorScreenEnable;
-            } else if (layer == LYR_Back) {
+    const auto isColorCalcEnabled = [&](LayerIndex layer, uint32 x) {
+        if (layer == LYR_Sprite) {
+            const SpriteParams &spriteParams = regs.spriteParams;
+            if (!spriteParams.colorCalcEnable) {
                 return false;
-            } else {
-                return regs.bgParams[layer - LYR_RBG0].lineColorScreenEnable;
             }
-        };
 
-        auto getLineColor = [&](LayerIndex layer) {
-            if (layer == LYR_RBG0 || (layer == LYR_NBG0_RBG1 && regs.bgEnabled[5])) {
-                const auto &rotParams = regs.rotParams[layer - LYR_RBG0];
-                if (rotParams.coeffTableEnable && rotParams.coeffUseLineColorData) {
-                    return m_rotParamStates[layer - LYR_RBG0].lineColor[x];
+            const uint8 pixelPriority = m_layerStates[LYR_Sprite].pixels.priority[x];
+
+            using enum SpriteColorCalculationCondition;
+            switch (spriteParams.colorCalcCond) {
+            case PriorityLessThanOrEqual: return pixelPriority <= spriteParams.colorCalcValue;
+            case PriorityEqual: return pixelPriority == spriteParams.colorCalcValue;
+            case PriorityGreaterThanOrEqual: return pixelPriority >= spriteParams.colorCalcValue;
+            case MsbEqualsOne: return m_layerStates[LYR_Sprite].pixels.color[x].msb == 1;
+            default: util::unreachable();
+            }
+        } else if (layer == LYR_Back) {
+            return regs.backScreenParams.colorCalcEnable;
+        } else {
+            return regs.bgParams[layer - LYR_RBG0].colorCalcEnable;
+        }
+    };
+
+    // Gather layer color calculation data
+    alignas(16) std::array<bool, kMaxResH> layer0ColorCalcEnabled;
+
+    for (uint32 x = 0; x < m_HRes; x++) {
+        const LayerIndex layer = scanline_layers[x][0];
+        if (m_colorCalcWindow[x]) {
+            layer0ColorCalcEnabled[x] = false;
+            continue;
+        }
+        if (!isColorCalcEnabled(layer, x)) {
+            layer0ColorCalcEnabled[x] = false;
+            continue;
+        }
+
+        switch (layer) {
+        case LYR_Back: [[fallthrough]];
+        case LYR_Sprite: layer0ColorCalcEnabled[x] = true; break;
+        default: layer0ColorCalcEnabled[x] = m_layerStates[layer].pixels.specialColorCalc[x]; break;
+        }
+    }
+
+    const std::span<Color888> framebufferOutput(reinterpret_cast<Color888 *>(&m_framebuffer[y * m_HRes]), m_HRes);
+
+    if (AnyBool(std::span{layer0ColorCalcEnabled}.first(m_HRes))) {
+        // Gather pixels for layer 1
+        alignas(16) std::array<Color888, kMaxResH> layer1Pixels;
+        for (uint32 x = 0; x < m_HRes; x++) {
+            layer1Pixels[x] = getLayerColor(scanline_layers[x][1], x);
+        }
+
+        // Extended color calculations (only in normal TV modes)
+        const bool useExtendedColorCalc = colorCalcParams.extendedColorCalcEnable && regs.TVMD.HRESOn < 2;
+
+        // Gather line-color data
+        alignas(16) std::array<bool, kMaxResH> layer0LineColorEnabled;
+        alignas(16) std::array<Color888, kMaxResH> layer0LineColors;
+        for (uint32 x = 0; x < m_HRes; x++) {
+            const LayerIndex layer = scanline_layers[x][0];
+
+            switch (layer) {
+            case LYR_Sprite: layer0LineColorEnabled[x] = regs.spriteParams.lineColorScreenEnable; break;
+            case LYR_Back: layer0LineColorEnabled[x] = false; break;
+            default: layer0LineColorEnabled[x] = regs.bgParams[layer - LYR_RBG0].lineColorScreenEnable; break;
+            }
+
+            if (layer0LineColorEnabled[x]) {
+                if (layer == LYR_RBG0 || (layer == LYR_NBG0_RBG1 && regs.bgEnabled[5])) {
+                    const auto &rotParams = regs.rotParams[layer - LYR_RBG0];
+                    if (rotParams.coeffTableEnable && rotParams.coeffUseLineColorData) {
+                        layer0LineColors[x] = m_rotParamStates[layer - LYR_RBG0].lineColor[x];
+                    } else {
+                        layer0LineColors[x] = m_lineBackLayerState.lineColor;
+                    }
                 } else {
-                    return m_lineBackLayerState.lineColor;
+                    layer0LineColors[x] = m_lineBackLayerState.lineColor;
                 }
-            } else {
-                return m_lineBackLayerState.lineColor;
             }
-        };
+        }
 
-        auto isShadowEnabled = [&](LayerIndex layer) {
-            if (layer == LYR_Sprite) {
-                return m_spriteLayerState.attrs[x].shadowOrWindow;
-            } else if (layer == LYR_Back) {
-                return regs.backScreenParams.shadowEnable;
-            } else {
-                return regs.bgParams[layer - LYR_RBG0].shadowEnable;
-            }
-        };
+        // Apply extended color calculations to layer 1
+        if (useExtendedColorCalc) {
+            alignas(16) std::array<bool, kMaxResH> layer1ColorCalcEnabled;
+            alignas(16) std::array<Color888, kMaxResH> layer2Pixels;
 
-        const bool isTopLayerColorCalcEnabled = [&] {
-            if (!isColorCalcEnabled(layers[0])) {
-                return false;
-            }
-            if (m_colorCalcWindow[x]) {
-                return false;
-            }
-            if (layers[0] == LYR_Back || layers[0] == LYR_Sprite) {
-                return true;
-            }
-            return m_layerStates[layers[0]].pixels[x].specialColorCalc;
-        }();
-
-        const auto &colorCalcParams = regs.colorCalcParams;
-
-        // Calculate color
-        Color888 outputColor{};
-        if (isTopLayerColorCalcEnabled) {
-            const Color888 topColor = getLayerColor(layers[0]);
-            Color888 btmColor = getLayerColor(layers[1]);
-
-            // Apply extended color calculations (only in normal TV modes)
-            const bool useExtendedColorCalc = colorCalcParams.extendedColorCalcEnable && regs.TVMD.HRESOn < 2;
-            if (useExtendedColorCalc) {
-                // TODO: honor color RAM mode + palette/RGB format restrictions
-                // - modes 1 and 2 don't blend layers if the bottom layer uses palette color
-
-                // HACK: assuming color RAM mode 0 for now (aka no restrictions)
-                if (isColorCalcEnabled(layers[1])) {
-                    const Color888 l2Color = getLayerColor(layers[2]);
-                    btmColor.r = (btmColor.r + l2Color.r) / 2;
-                    btmColor.g = (btmColor.g + l2Color.g) / 2;
-                    btmColor.b = (btmColor.b + l2Color.b) / 2;
+            // Gather pixels for layer 2
+            for (uint32 x = 0; x < m_HRes; x++) {
+                layer1ColorCalcEnabled[x] = isColorCalcEnabled(scanline_layers[x][1], x);
+                if (layer1ColorCalcEnabled[x]) {
+                    layer2Pixels[x] = getLayerColor(scanline_layers[x][2], x);
                 }
             }
 
-            // Insert and blend line color screen if top layer uses it
-            if (isLineColorEnabled(layers[0])) {
-                const Color888 lineColor = getLineColor(layers[0]);
-                if (useExtendedColorCalc) {
-                    btmColor.r = (lineColor.r + btmColor.r) / 2;
-                    btmColor.g = (lineColor.g + btmColor.g) / 2;
-                    btmColor.b = (lineColor.b + btmColor.b) / 2;
-                } else {
-                    const uint8 ratio = regs.lineScreenParams.colorCalcRatio;
-                    btmColor.r = lineColor.r + ((int)btmColor.r - (int)lineColor.r) * ratio / 32;
-                    btmColor.g = lineColor.g + ((int)btmColor.g - (int)lineColor.g) * ratio / 32;
-                    btmColor.b = lineColor.b + ((int)btmColor.b - (int)lineColor.b) * ratio / 32;
-                }
-            }
+            for (uint32 x = 0; x < m_HRes; ++x) {
+                if (layer1ColorCalcEnabled[x]) {
+                    // TODO: honor color RAM mode + palette/RGB format restrictions
+                    // - modes 1 and 2 don't blend layers if the bottom layer uses palette color
 
-            // Blend top and blended bottom layers
-            if (colorCalcParams.useAdditiveBlend) {
-                outputColor.r = std::min<uint32>(topColor.r + btmColor.r, 255u);
-                outputColor.g = std::min<uint32>(topColor.g + btmColor.g, 255u);
-                outputColor.b = std::min<uint32>(topColor.b + btmColor.b, 255u);
-            } else {
-                const uint8 ratio = getColorCalcRatio(colorCalcParams.useSecondScreenRatio ? layers[1] : layers[0]);
-                outputColor.r = btmColor.r + ((int)topColor.r - (int)btmColor.r) * ratio / 32;
-                outputColor.g = btmColor.g + ((int)topColor.g - (int)btmColor.g) * ratio / 32;
-                outputColor.b = btmColor.b + ((int)topColor.b - (int)btmColor.b) * ratio / 32;
+                    // HACK: assuming color RAM mode 0 for now (aka no restrictions)
+                    // TODO: x64 - _mm_avg_epu8(pavgb)
+                    // TODO: a64 - vhaddq_u8(uhadd.u8)
+                    const Color888 &l2Color = layer2Pixels[x];
+                    Color888 &l1Color = layer1Pixels[x];
+                    l1Color = AverageRGB888(l1Color, l2Color);
+                }
+
+                // Blend line color if top layer uses it
+                if (layer0LineColorEnabled[x]) {
+                    // Average color
+                    // TODO: x64 - _mm_avg_epu8(pavgb)
+                    // TODO: a64 - vhaddq_u8(uhadd.u8)
+                    const Color888 &lineColor = layer0LineColors[x];
+                    Color888 &l1Color = layer1Pixels[x];
+                    l1Color = AverageRGB888(l1Color, lineColor);
+                }
             }
         } else {
-            outputColor = getLayerColor(layers[0]);
+            // Alpha composite
+            Color888CompositeRatioMasked(std::span{layer1Pixels}.first(m_HRes), layer0LineColorEnabled, layer1Pixels,
+                                         layer0LineColors, regs.lineScreenParams.colorCalcRatio);
         }
 
-        // Apply sprite shadow
-        if (isShadowEnabled(layers[0])) {
-            const bool isNormalShadow = m_spriteLayerState.attrs[x].normalShadow;
-            const bool isMSBShadow =
-                !regs.spriteParams.spriteWindowEnable && m_spriteLayerState.attrs[x].shadowOrWindow;
-            if (isNormalShadow || isMSBShadow) {
-                outputColor.r >>= 1u;
-                outputColor.g >>= 1u;
-                outputColor.b >>= 1u;
+        // Blend layer 0 and layer 1
+        if (colorCalcParams.useAdditiveBlend) {
+            // Saturated add
+            Color888SatAddMasked(framebufferOutput, layer0ColorCalcEnabled, layer0Pixels, layer1Pixels);
+        } else {
+            // Gather extended color ratio info
+            alignas(16) std::array<uint8, kMaxResH> scanline_ratio;
+            for (uint32 x = 0; x < m_HRes; x++) {
+                if (!layer0ColorCalcEnabled[x]) {
+                    scanline_ratio[x] = 0;
+                    continue;
+                }
+
+                const LayerIndex layer = scanline_layers[x][colorCalcParams.useSecondScreenRatio];
+                switch (layer) {
+                case LYR_Sprite: scanline_ratio[x] = m_spriteLayerState.attrs[x].colorCalcRatio; break;
+                case LYR_Back: scanline_ratio[x] = regs.backScreenParams.colorCalcRatio; break;
+                default: scanline_ratio[x] = regs.bgParams[layer - LYR_RBG0].colorCalcRatio; break;
+                }
             }
+
+            // Alpha composite
+            Color888CompositeRatioPerPixelMasked(framebufferOutput, layer0ColorCalcEnabled, layer0Pixels, layer1Pixels,
+                                                 scanline_ratio);
+        }
+    } else {
+        std::copy_n(layer0Pixels.cbegin(), framebufferOutput.size(), framebufferOutput.begin());
+    }
+
+    // Gather shadow data
+    alignas(16) std::array<bool, kMaxResH> layer0ShadowEnabled;
+    for (uint32 x = 0; x < m_HRes; x++) {
+        const LayerIndex layer = scanline_layers[x][0];
+
+        const bool isNormalShadow = m_spriteLayerState.attrs[x].normalShadow;
+        const bool isMSBShadow = !regs.spriteParams.spriteWindowEnable && m_spriteLayerState.attrs[x].shadowOrWindow;
+        if (!isNormalShadow && !isMSBShadow) {
+            layer0ShadowEnabled[x] = false;
+            continue;
         }
 
-        // Apply color offset if enabled
-        if (regs.colorOffsetEnable[layers[0]]) {
-            const auto &colorOffset = regs.colorOffset[regs.colorOffsetSelect[layers[0]]];
-            if (colorOffset.nonZero) {
-                outputColor.r = kColorOffsetLUT[colorOffset.r][outputColor.r];
-                outputColor.g = kColorOffsetLUT[colorOffset.g][outputColor.g];
-                outputColor.b = kColorOffsetLUT[colorOffset.b][outputColor.b];
+        switch (layer) {
+        case LYR_Sprite: layer0ShadowEnabled[x] = m_spriteLayerState.attrs[x].shadowOrWindow; break;
+        case LYR_Back: layer0ShadowEnabled[x] = regs.backScreenParams.shadowEnable; break;
+        default: layer0ShadowEnabled[x] = regs.bgParams[layer - LYR_RBG0].shadowEnable; break;
+        }
+    }
+
+    // Apply sprite shadow
+    if (AnyBool(std::span{layer0ShadowEnabled}.first(m_HRes))) {
+        Color888ShadowMasked(framebufferOutput, layer0ShadowEnabled);
+    }
+
+    // Gather color offset info
+    alignas(16) std::array<bool, kMaxResH> layer0ColorOffsetEnabled;
+    for (uint32 x = 0; x < m_HRes; x++) {
+        layer0ColorOffsetEnabled[x] = regs.colorOffsetEnable[scanline_layers[x][0]];
+    }
+
+    // Apply color offset if enabled
+    if (AnyBool(std::span{layer0ColorOffsetEnabled}.first(m_HRes))) {
+        for (uint32 x = 0; Color888 & outputColor : framebufferOutput) {
+            if (layer0ColorOffsetEnabled[x]) {
+                const auto &colorOffset = regs.colorOffset[regs.colorOffsetSelect[scanline_layers[x][0]]];
+                if (colorOffset.nonZero) {
+                    outputColor.r = kColorOffsetLUT[colorOffset.r][outputColor.r];
+                    outputColor.g = kColorOffsetLUT[colorOffset.g][outputColor.g];
+                    outputColor.b = kColorOffsetLUT[colorOffset.b][outputColor.b];
+                }
             }
+            ++x;
         }
+    }
 
-        fbPtr[x] = outputColor.u32 | 0xFF000000;
+    // Opaque alpha
+    for (Color888 &outputColor : framebufferOutput) {
+        outputColor.u32 |= 0xFF000000;
     }
 }
 
@@ -3627,7 +4425,7 @@ NO_INLINE void VDP::VDP2DrawNormalScrollBG(uint32 y, const BGParams &bgParams, L
             }
             if (currMosaicCounterX > 0) {
                 // Simply copy over the data from the previous pixel
-                layerState.pixels[x] = layerState.pixels[x - 1];
+                layerState.pixels.SetPixel(x, layerState.pixels.GetPixel(x - 1));
 
                 // Increment horizontal coordinate
                 fracScrollX += bgState.scrollIncH;
@@ -3642,7 +4440,7 @@ NO_INLINE void VDP::VDP2DrawNormalScrollBG(uint32 y, const BGParams &bgParams, L
 
         if (windowState[x]) {
             // Make pixel transparent if inside active window area
-            layerState.pixels[x].transparent = true;
+            layerState.pixels.transparent[x] = true;
         } else {
             // Compute integer scroll screen coordinates
             const uint32 scrollX = fracScrollX >> 8u;
@@ -3650,8 +4448,9 @@ NO_INLINE void VDP::VDP2DrawNormalScrollBG(uint32 y, const BGParams &bgParams, L
             const CoordU32 scrollCoord{scrollX, scrollY};
 
             // Plot pixel
-            layerState.pixels[x] = VDP2FetchScrollBGPixel<false, charMode, fourCellChar, colorFormat, colorMode>(
-                bgParams, bgParams.pageBaseAddresses, bgParams.pageShiftH, bgParams.pageShiftV, scrollCoord);
+            layerState.pixels.SetPixel(
+                x, VDP2FetchScrollBGPixel<false, charMode, fourCellChar, colorFormat, colorMode>(
+                       bgParams, bgParams.pageBaseAddresses, bgParams.pageShiftH, bgParams.pageShiftV, scrollCoord));
         }
 
         // Increment horizontal coordinate
@@ -3694,7 +4493,7 @@ NO_INLINE void VDP::VDP2DrawNormalBitmapBG(uint32 y, const BGParams &bgParams, L
             }
             if (currMosaicCounterX > 0) {
                 // Simply copy over the data from the previous pixel
-                layerState.pixels[x] = layerState.pixels[x - 1];
+                layerState.pixels.SetPixel(x, layerState.pixels.GetPixel(x - 1));
 
                 // Increment horizontal coordinate
                 fracScrollX += bgState.scrollIncH;
@@ -3709,7 +4508,7 @@ NO_INLINE void VDP::VDP2DrawNormalBitmapBG(uint32 y, const BGParams &bgParams, L
 
         if (windowState[x]) {
             // Make pixel transparent if inside active window area
-            layerState.pixels[x].transparent = true;
+            layerState.pixels.transparent[x] = true;
         } else {
             // Compute integer scroll screen coordinates
             const uint32 scrollX = fracScrollX >> 8u;
@@ -3717,8 +4516,8 @@ NO_INLINE void VDP::VDP2DrawNormalBitmapBG(uint32 y, const BGParams &bgParams, L
             const CoordU32 scrollCoord{scrollX, scrollY};
 
             // Plot pixel
-            layerState.pixels[x] =
-                VDP2FetchBitmapPixel<colorFormat, colorMode>(bgParams, bgParams.bitmapBaseAddress, scrollCoord);
+            layerState.pixels.SetPixel(
+                x, VDP2FetchBitmapPixel<colorFormat, colorMode>(bgParams, bgParams.bitmapBaseAddress, scrollCoord));
         }
 
         // Increment horizontal coordinate
@@ -3737,10 +4536,10 @@ NO_INLINE void VDP::VDP2DrawRotationScrollBG(uint32 y, const BGParams &bgParams,
 
     for (uint32 x = 0; x < maxX; x++) {
         const uint32 xx = x << xShift;
-        auto &pixel = layerState.pixels[xx];
         util::ScopeGuard sgDoublePixel{[&] {
             if (doubleResH) {
-                layerState.pixels[xx + 1] = pixel;
+                const Pixel pixel = layerState.pixels.GetPixel(xx);
+                layerState.pixels.SetPixel(xx + 1, pixel);
             }
         }};
 
@@ -3751,7 +4550,7 @@ NO_INLINE void VDP::VDP2DrawRotationScrollBG(uint32 y, const BGParams &bgParams,
 
         // Handle transparent pixels in coefficient table
         if (rotParams.coeffTableEnable && rotParamState.transparent[x]) {
-            pixel.transparent = true;
+            layerState.pixels.transparent[xx] = true;
             continue;
         }
 
@@ -3771,11 +4570,12 @@ NO_INLINE void VDP::VDP2DrawRotationScrollBG(uint32 y, const BGParams &bgParams,
 
         if (windowState[x]) {
             // Make pixel transparent if inside a window
-            pixel.transparent = true;
+            layerState.pixels.transparent[xx] = true;
         } else if ((scrollX < maxScrollX && scrollY < maxScrollY) || usingRepeat) {
             // Plot pixel
-            pixel = VDP2FetchScrollBGPixel<true, charMode, fourCellChar, colorFormat, colorMode>(
-                bgParams, rotParamState.pageBaseAddresses, rotParams.pageShiftH, rotParams.pageShiftV, scrollCoord);
+            layerState.pixels.SetPixel(xx, VDP2FetchScrollBGPixel<true, charMode, fourCellChar, colorFormat, colorMode>(
+                                               bgParams, rotParamState.pageBaseAddresses, rotParams.pageShiftH,
+                                               rotParams.pageShiftV, scrollCoord));
         } else if (rotParams.screenOverProcess == ScreenOverProcess::RepeatChar) {
             // Out of bounds - repeat character
             const uint16 charData = rotParams.screenOverPatternName;
@@ -3816,10 +4616,10 @@ NO_INLINE void VDP::VDP2DrawRotationScrollBG(uint32 y, const BGParams &bgParams,
             const uint32 dotX = bit::extract<0, 2>(scrollX);
             const uint32 dotY = bit::extract<0, 2>(scrollY);
             const CoordU32 dotCoord{dotX, dotY};
-            pixel = VDP2FetchCharacterPixel<colorFormat, colorMode>(bgParams, ch, dotCoord, 0);
+            layerState.pixels.SetPixel(xx, VDP2FetchCharacterPixel<colorFormat, colorMode>(bgParams, ch, dotCoord, 0));
         } else {
             // Out of bounds - transparent
-            pixel.transparent = true;
+            layerState.pixels.transparent[xx] = true;
         }
     }
 }
@@ -3835,10 +4635,10 @@ NO_INLINE void VDP::VDP2DrawRotationBitmapBG(uint32 y, const BGParams &bgParams,
 
     for (uint32 x = 0; x < maxX; x++) {
         const uint32 xx = x << xShift;
-        auto &pixel = layerState.pixels[xx];
         util::ScopeGuard sgDoublePixel{[&] {
             if (doubleResH) {
-                layerState.pixels[xx + 1] = pixel;
+                const Pixel pixel = layerState.pixels.GetPixel(xx);
+                layerState.pixels.SetPixel(xx + 1, pixel);
             }
         }};
         const RotParamSelector rotParamSelector = selRotParam ? VDP2SelectRotationParameter(x, y) : RotParamA;
@@ -3848,7 +4648,7 @@ NO_INLINE void VDP::VDP2DrawRotationBitmapBG(uint32 y, const BGParams &bgParams,
 
         // Handle transparent pixels in coefficient table
         if (rotParams.coeffTableEnable && rotParamState.transparent[x]) {
-            pixel.transparent = true;
+            layerState.pixels.transparent[xx] = true;
             continue;
         }
 
@@ -3867,13 +4667,14 @@ NO_INLINE void VDP::VDP2DrawRotationBitmapBG(uint32 y, const BGParams &bgParams,
 
         if (windowState[x]) {
             // Make pixel transparent if inside a window
-            pixel.transparent = true;
+            layerState.pixels.transparent[xx] = true;
         } else if ((scrollX < maxScrollX && scrollY < maxScrollY) || usingRepeat) {
             // Plot pixel
-            pixel = VDP2FetchBitmapPixel<colorFormat, colorMode>(bgParams, rotParams.bitmapBaseAddress, scrollCoord);
+            layerState.pixels.SetPixel(
+                xx, VDP2FetchBitmapPixel<colorFormat, colorMode>(bgParams, rotParams.bitmapBaseAddress, scrollCoord));
         } else {
             // Out of bounds and no repeat
-            pixel.transparent = true;
+            layerState.pixels.transparent[xx] = true;
         }
     }
 }
@@ -4018,8 +4819,8 @@ FORCE_INLINE VDP::Pixel VDP::VDP2FetchScrollBGPixel(const BGParams &bgParams, st
     // +---------+---------+   +----+----+----+----+
     //
     // Normal and rotation BGs are divided into planes in the exact configurations illustrated above.
-    // The BG's Map Offset Register is combined with the BG plane's Map Register (MPxxN#) to produce a base address for
-    // each plane:
+    // The BG's Map Offset Register is combined with the BG plane's Map Register (MPxxN#) to produce a base address
+    // for each plane:
     //   Address bits  Source
     //            8-6  Map Offset Register (MPOFN)
     //            5-0  Map Register (MPxxN#)
@@ -4056,16 +4857,16 @@ FORCE_INLINE VDP::Pixel VDP::VDP2FetchScrollBGPixel(const BGParams &bgParams, st
     // |4033|4034|  |4095|4096|   | 993| 994|  |1023|1024|
     // +----+----+..+----+----+   +----+----+..+----+----+
     //
-    // Pages contain 32x32 or 64x64 character patterns, which are groups of 1x1 or 2x2 cells, determined by Character
-    // Size in the Character Control Register (CHCTLA-B).
+    // Pages contain 32x32 or 64x64 character patterns, which are groups of 1x1 or 2x2 cells, determined by
+    // Character Size in the Character Control Register (CHCTLA-B).
     //
     // Pages always contain a total of 64x64 cells - a grid of 64x64 1x1 character patterns or 32x32 2x2 character
     // patterns. Because of this, pages always have 512x512 dots.
     //
     // Character patterns in a page are stored sequentially in VRAM left to right, top to bottom, as shown above.
     //
-    // fourCellChar specifies the size of the character patterns (1x1 when false, 2x2 when true) and, by extension, the
-    // dimensions of the page (32x32 or 64x64 respectively).
+    // fourCellChar specifies the size of the character patterns (1x1 when false, 2x2 when true) and, by extension,
+    // the dimensions of the page (32x32 or 64x64 respectively).
     //
     // 2x2 Character Pattern     1x1 C.P.
     // +---------+---------+   +---------+
@@ -4078,22 +4879,23 @@ FORCE_INLINE VDP::Pixel VDP::VDP2FetchScrollBGPixel(const BGParams &bgParams, st
     // |         |         |
     // +---------+---------+
     //
-    // Character patterns are groups of 1x1 or 2x2 cells, determined by Character Size in the Character Control Register
-    // (CHCTLA-B).
+    // Character patterns are groups of 1x1 or 2x2 cells, determined by Character Size in the Character Control
+    // Register (CHCTLA-B).
     //
     // Cells are stored sequentially in VRAM left to right, top to bottom, as shown above.
     //
-    // Character patterns contain a character number (15 bits), a palette number (7 bits, only used with 16 or 256 color
-    // palette modes), two special function bits (Special Priority and Special Color Calculation) and two flip bits
-    // (horizontal and vertical).
+    // Character patterns contain a character number (15 bits), a palette number (7 bits, only used with 16 or 256
+    // color palette modes), two special function bits (Special Priority and Special Color Calculation) and two flip
+    // bits (horizontal and vertical).
     //
-    // Character patterns can be one or two words long, as defined by Pattern Name Data Size in the Pattern Name Control
-    // Register (PNCN0-3, PNCR). When using one word characters, some of the data comes from supplementary registers.
+    // Character patterns can be one or two words long, as defined by Pattern Name Data Size in the Pattern Name
+    // Control Register (PNCN0-3, PNCR). When using one word characters, some of the data comes from supplementary
+    // registers.
     //
     // fourCellChar stores the character pattern size (1x1 when false, 2x2 when true).
     // twoWordChar determines if characters are one (false) or two (true) words long.
-    // extChar determines the length of the character data field in one word characters -- when true, they're extended
-    // by two bits, taking over the two flip bits.
+    // extChar determines the length of the character data field in one word characters -- when true, they're
+    // extended by two bits, taking over the two flip bits.
     //
     //           Cell
     // +--+--+--+--+--+--+--+--+
@@ -4283,20 +5085,20 @@ FORCE_INLINE VDP::Pixel VDP::VDP2FetchCharacterPixel(const BGParams &bgParams, C
 
     // Determine special color calculation flag
     const auto &specFuncCode = regs.specialFunctionCodes[bgParams.specialFunctionSelect];
-    auto getSpecialColorCalcFlag = [&](uint8 colorData) {
+    auto getSpecialColorCalcFlag = [&](uint8 specColorCode, bool colorMSB) {
         using enum SpecialColorCalcMode;
         switch (bgParams.specialColorCalcMode) {
         case PerScreen: return bgParams.colorCalcEnable;
         case PerCharacter: return bgParams.colorCalcEnable && ch.specColorCalc;
-        case PerDot: return bgParams.colorCalcEnable && ch.specColorCalc && specFuncCode.colorMatches[colorData];
-        case ColorDataMSB: return bgParams.colorCalcEnable && ch.specColorCalc && bit::test<2>(colorData);
+        case PerDot: return bgParams.colorCalcEnable && ch.specColorCalc && specFuncCode.colorMatches[specColorCode];
+        case ColorDataMSB: return bgParams.colorCalcEnable && colorMSB;
         }
         util::unreachable();
     };
 
     // Fetch color and determine transparency.
     // Also determine special color calculation flag if using per-dot or color data MSB.
-    uint8 colorData = 0;
+    uint8 colorData;
     if constexpr (colorFormat == ColorFormat::Palette16) {
         const uint32 dotAddress = cellAddress + (dotOffset >> 1u);
         const uint8 dotData = (VDP2ReadRendererVRAM<uint8>(dotAddress) >> ((~dotX & 1) * 4)) & 0xF;
@@ -4304,7 +5106,8 @@ FORCE_INLINE VDP::Pixel VDP::VDP2FetchCharacterPixel(const BGParams &bgParams, C
         colorData = bit::extract<1, 3>(dotData);
         pixel.color = VDP2FetchCRAMColor<colorMode>(bgParams.cramOffset, colorIndex);
         pixel.transparent = bgParams.enableTransparency && dotData == 0;
-        pixel.specialColorCalc = getSpecialColorCalcFlag(colorData);
+        pixel.specialColorCalc = getSpecialColorCalcFlag(colorData, pixel.color.msb);
+
     } else if constexpr (colorFormat == ColorFormat::Palette256) {
         const uint32 dotAddress = cellAddress + dotOffset;
         const uint8 dotData = VDP2ReadRendererVRAM<uint8>(dotAddress);
@@ -4312,7 +5115,8 @@ FORCE_INLINE VDP::Pixel VDP::VDP2FetchCharacterPixel(const BGParams &bgParams, C
         colorData = bit::extract<1, 3>(dotData);
         pixel.color = VDP2FetchCRAMColor<colorMode>(bgParams.cramOffset, colorIndex);
         pixel.transparent = bgParams.enableTransparency && dotData == 0;
-        pixel.specialColorCalc = getSpecialColorCalcFlag(colorData);
+        pixel.specialColorCalc = getSpecialColorCalcFlag(colorData, pixel.color.msb);
+
     } else if constexpr (colorFormat == ColorFormat::Palette2048) {
         const uint32 dotAddress = cellAddress + dotOffset * sizeof(uint16);
         const uint16 dotData = VDP2ReadRendererVRAM<uint16>(dotAddress);
@@ -4320,19 +5124,21 @@ FORCE_INLINE VDP::Pixel VDP::VDP2FetchCharacterPixel(const BGParams &bgParams, C
         colorData = bit::extract<1, 3>(dotData);
         pixel.color = VDP2FetchCRAMColor<colorMode>(bgParams.cramOffset, colorIndex);
         pixel.transparent = bgParams.enableTransparency && (dotData & 0x7FF) == 0;
-        pixel.specialColorCalc = getSpecialColorCalcFlag(colorData);
+        pixel.specialColorCalc = getSpecialColorCalcFlag(colorData, pixel.color.msb);
+
     } else if constexpr (colorFormat == ColorFormat::RGB555) {
         const uint32 dotAddress = cellAddress + dotOffset * sizeof(uint16);
         const uint16 dotData = VDP2ReadRendererVRAM<uint16>(dotAddress);
         pixel.color = ConvertRGB555to888(Color555{.u16 = dotData});
         pixel.transparent = bgParams.enableTransparency && bit::extract<15>(dotData) == 0;
-        pixel.specialColorCalc = getSpecialColorCalcFlag(0b111);
+        pixel.specialColorCalc = getSpecialColorCalcFlag(0b111, true);
+
     } else if constexpr (colorFormat == ColorFormat::RGB888) {
         const uint32 dotAddress = cellAddress + dotOffset * sizeof(uint32);
         const uint32 dotData = VDP2ReadRendererVRAM<uint32>(dotAddress);
         pixel.color.u32 = dotData;
         pixel.transparent = bgParams.enableTransparency && bit::extract<31>(dotData) == 0;
-        pixel.specialColorCalc = getSpecialColorCalcFlag(0b111);
+        pixel.specialColorCalc = getSpecialColorCalcFlag(0b111, true);
     }
 
     // Compute priority
@@ -4343,7 +5149,7 @@ FORCE_INLINE VDP::Pixel VDP::VDP2FetchCharacterPixel(const BGParams &bgParams, C
     } else if (bgParams.priorityMode == PriorityMode::PerDot) {
         if constexpr (IsPaletteColorFormat(colorFormat)) {
             pixel.priority &= ~1;
-            pixel.priority |= ch.specPriority && specFuncCode.colorMatches[colorData];
+            pixel.priority |= specFuncCode.colorMatches[colorData];
         }
     }
 
@@ -4385,27 +5191,31 @@ FORCE_INLINE VDP::Pixel VDP::VDP2FetchBitmapPixel(const BGParams &bgParams, uint
         const uint32 colorIndex = palNum | dotData;
         pixel.color = VDP2FetchCRAMColor<colorMode>(bgParams.cramOffset, colorIndex);
         pixel.transparent = bgParams.enableTransparency && dotData == 0;
-        pixel.specialColorCalc = getSpecialColorCalcFlag(bit::test<3>(dotData));
+        pixel.specialColorCalc = getSpecialColorCalcFlag(pixel.color.msb);
+
     } else if constexpr (colorFormat == ColorFormat::Palette256) {
         const uint32 dotAddress = bitmapBaseAddress + dotOffset;
         const uint8 dotData = VDP2ReadRendererVRAM<uint8>(dotAddress);
         const uint32 colorIndex = palNum | dotData;
         pixel.color = VDP2FetchCRAMColor<colorMode>(bgParams.cramOffset, colorIndex);
         pixel.transparent = bgParams.enableTransparency && dotData == 0;
-        pixel.specialColorCalc = getSpecialColorCalcFlag(bit::test<3>(dotData));
+        pixel.specialColorCalc = getSpecialColorCalcFlag(pixel.color.msb);
+
     } else if constexpr (colorFormat == ColorFormat::Palette2048) {
         const uint32 dotAddress = bitmapBaseAddress + dotOffset * sizeof(uint16);
         const uint16 dotData = VDP2ReadRendererVRAM<uint16>(dotAddress);
         const uint32 colorIndex = dotData & 0x7FF;
         pixel.color = VDP2FetchCRAMColor<colorMode>(bgParams.cramOffset, colorIndex);
         pixel.transparent = bgParams.enableTransparency && (dotData & 0x7FF) == 0;
-        pixel.specialColorCalc = getSpecialColorCalcFlag(bit::test<3>(dotData));
+        pixel.specialColorCalc = getSpecialColorCalcFlag(pixel.color.msb);
+
     } else if constexpr (colorFormat == ColorFormat::RGB555) {
         const uint32 dotAddress = bitmapBaseAddress + dotOffset * sizeof(uint16);
         const uint16 dotData = VDP2ReadRendererVRAM<uint16>(dotAddress);
         pixel.color = ConvertRGB555to888(Color555{.u16 = dotData});
         pixel.transparent = bgParams.enableTransparency && bit::extract<15>(dotData) == 0;
         pixel.specialColorCalc = getSpecialColorCalcFlag(true);
+
     } else if constexpr (colorFormat == ColorFormat::RGB888) {
         const uint32 dotAddress = bitmapBaseAddress + dotOffset * sizeof(uint32);
         const uint32 dotData = VDP2ReadRendererVRAM<uint32>(dotAddress);

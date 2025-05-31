@@ -78,6 +78,7 @@ bool Load(std::filesystem::path cuePath, Disc &disc, bool preloadToRAM) {
 
     uint32 nextTrackNum = 0;
     uint32 frameAddress = 150; // start with lead-in
+    uint32 prevTrackIndex = ~0;
     uint32 currTrackIndex = ~0;
     uint32 currFileIndex = 0;
     uintmax_t binFileOffset = 0;
@@ -232,6 +233,7 @@ bool Load(std::filesystem::path cuePath, Disc &disc, bool preloadToRAM) {
             // fmt::println("BIN/CUE:   Sector size: {} bytes", sectorSize);
             // fmt::println("BIN/CUE:   Control/ADR: {:02X}", controlADR);
 
+            prevTrackIndex = currTrackIndex;
             currTrackIndex = trackNum - 1;
 
             auto &track = session.tracks[currTrackIndex];
@@ -289,8 +291,8 @@ bool Load(std::filesystem::path cuePath, Disc &disc, bool preloadToRAM) {
             }
             auto &track = session.tracks[currTrackIndex];
 
-            if (currTrackIndex > 0 && trackFileIndices[currTrackIndex] == trackFileIndices[currTrackIndex - 1]) {
-                auto &prevTrack = session.tracks[currTrackIndex - 1];
+            if (prevTrackIndex != ~0 && trackFileIndices[currTrackIndex] == trackFileIndices[prevTrackIndex]) {
+                auto &prevTrack = session.tracks[prevTrackIndex];
                 binFileOffset += (TimestampToFrameAddress(m, s, f) - TimestampToFrameAddress(prevM, prevS, prevF)) *
                                  prevTrack.sectorSize;
             }
@@ -306,14 +308,14 @@ bool Load(std::filesystem::path cuePath, Disc &disc, bool preloadToRAM) {
                 hasIndex0 = true;
             } else if (indexNum == 1) {
                 // Close previous track
-                if (currTrackIndex > 0) {
-                    auto &prevTrack = session.tracks[currTrackIndex - 1];
-                    const uintmax_t binFileLength = binFileOffset - trackFileOffsets[currTrackIndex - 1];
+                if (prevTrackIndex != ~0) {
+                    auto &prevTrack = session.tracks[prevTrackIndex];
+                    const uintmax_t binFileLength = binFileOffset - trackFileOffsets[prevTrackIndex];
                     if (prevTrack.endFrameAddress < prevTrack.startFrameAddress) {
                         const uint32 frames = binFileLength / prevTrack.sectorSize;
                         prevTrack.endFrameAddress = prevTrack.startFrameAddress + frames - 1;
                         prevTrack.binaryReader = std::make_unique<SharedSubviewBinaryReader>(
-                            binaryReader, trackFileOffsets[currTrackIndex - 1], binFileLength);
+                            binaryReader, trackFileOffsets[prevTrackIndex], binFileLength);
                         frameAddress += frames;
                     }
 

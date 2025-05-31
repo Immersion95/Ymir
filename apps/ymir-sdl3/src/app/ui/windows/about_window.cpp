@@ -151,6 +151,12 @@ void AboutWindow::DrawAboutTab() {
     ImGui::PushFont(m_context.fonts.sansSerif.xlarge.bold);
     ImGui::TextUnformatted("Version " Ymir_VERSION);
     ImGui::PopFont();
+#if Ymir_DEV_BUILD
+    ImGui::SameLine();
+    ImGui::PushFont(m_context.fonts.sansSerif.xlarge.regular);
+    ImGui::TextUnformatted("(development build)");
+    ImGui::PopFont();
+#endif
 
     ImGui::PushFont(m_context.fonts.sansSerif.large.regular);
     ImGui::TextUnformatted("A Sega Saturn emulator");
@@ -173,6 +179,11 @@ void AboutWindow::DrawAboutTab() {
     ImGui::TextUnformatted("The source code can be found at ");
     ImGui::SameLine(0, 0);
     ImGui::TextLinkOpenURL("https://github.com/StrikerX3/Ymir");
+
+    ImGui::NewLine();
+    ImGui::TextUnformatted("Join the official ");
+    ImGui::SameLine(0, 0);
+    ImGui::TextLinkOpenURL("Discord server", "https://discord.gg/NN3A7n5dzn");
 }
 
 void AboutWindow::DrawDependenciesTab() {
@@ -354,7 +365,7 @@ void AboutWindow::DrawAcknowledgementsTab() {
         ackWithAuthor("saturn-tests", "StrikerX3", "https://github.com/StrikerX3/saturn-tests");
         ackWithAuthor("SH-4 single step tests", "raddad772", "https://github.com/SingleStepTests/sh4");
         ackWithAuthor("M68000 single step tests", "raddad772", "https://github.com/SingleStepTests/m68000");
-        ackWithAuthor("scsptest and scspadpcm", "celeriyacon", "https://github.com/celeriyacon");
+        ackWithAuthor("scsptest, scspadpcm and sh2test", "celeriyacon", "https://github.com/celeriyacon");
 
         // -----------------------------------------------------------------------------
 

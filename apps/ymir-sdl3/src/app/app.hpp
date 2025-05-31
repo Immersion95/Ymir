@@ -79,6 +79,8 @@ private:
     void OpenWelcomeModal(bool scanIPLROMS);
 
     void RebindInputs();
+    ImGuiStyle &ReloadStyle(float displayScale);
+    void ReloadFonts(float displayScale);
 
     template <int port>
     void ReadPeripheral(ymir::peripheral::PeripheralReport &report);

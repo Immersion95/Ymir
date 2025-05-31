@@ -78,6 +78,7 @@ void SMPC::Reset(bool hard) {
     m_extLatchEnable2 = false;
 
     m_getPeripheralData = false;
+    m_optimize = false;
     m_port1mode = 0;
     m_port2mode = 0;
 
@@ -697,29 +698,20 @@ void SMPC::RESDISA() {
 void SMPC::INTBACK() {
     devlog::trace<grp::base>("Processing INTBACK {:02X} {:02X} {:02X}", IREG[0], IREG[1], IREG[2]);
 
-    m_getPeripheralData = bit::test<3>(IREG[1]);
-
     if (m_intbackInProgress) {
-        if (m_getPeripheralData) {
-            WriteINTBACKPeripheralReport();
-        } else {
-            WriteINTBACKStatusReport();
-        }
+        WriteINTBACKPeripheralReport();
     } else {
         if (IREG[2] != 0xF0) {
             devlog::debug<grp::base>("Unexpected INTBACK IREG2: {:02X}", IREG[2]);
             // TODO: does SMPC reject the command in this case?
         }
 
-        m_intbackInProgress = true;
-
         m_optimize = bit::test<1>(IREG[1]);
+        m_getPeripheralData = bit::test<3>(IREG[1]);
         m_port1mode = bit::extract<4, 5>(IREG[1]);
         m_port2mode = bit::extract<6, 7>(IREG[1]);
 
-        if (m_getPeripheralData) {
-            ReadPeripherals();
-        }
+        m_intbackInProgress = m_getPeripheralData;
 
         const bool getSMPCStatus = IREG[0] == 0x01;
         if (getSMPCStatus) {
@@ -738,8 +730,10 @@ void SMPC::TriggerOptimizedINTBACKRead() {
     if (m_optimize) {
         m_optimize = false;
 
-        ReadPeripherals();
-        m_cbSystemManagerInterruptCallback();
+        if (m_getPeripheralData) {
+            devlog::trace<grp::base>("Optimized INTBACK triggered");
+            m_scheduler.ScheduleFromNow(m_commandEvent, 0);
+        }
     }
 }
 
@@ -767,7 +761,7 @@ void SMPC::WriteINTBACKStatusReport() {
     SR.bit7 = 0;                  // fixed 0
     SR.PDL = 1;                   // fixed 1 for status report
     SR.NPE = m_getPeripheralData; // 0=no peripheral data, 1=has peripheral data
-    SR.RESB = 0;                  // reset button state (0=off, 1=on)
+    SR.RESB = m_resetState;       // reset button state (0=off, 1=on)
     SR.P1MDn = m_port1mode;
     SR.P2MDn = m_port2mode;
 
@@ -811,13 +805,15 @@ void SMPC::WriteINTBACKStatusReport() {
     OREG[15] = SMEM[3]; // SMEM 4 Saved Data
 
     OREG[31] = 0x10;
-
-    m_intbackInProgress = m_getPeripheralData;
 }
 
 void SMPC::WriteINTBACKPeripheralReport() {
     const bool firstReport = m_intbackReportOffset == 0;
     devlog::trace<grp::base>("INTBACK peripheral report - first? {}", firstReport);
+
+    if (firstReport) {
+        ReadPeripherals();
+    }
 
     const uint8 reportLength = std::min<uint8>(32, m_intbackReport.size() - m_intbackReportOffset);
     std::copy_n(m_intbackReport.begin() + m_intbackReportOffset, reportLength, OREG.begin());
@@ -827,12 +823,13 @@ void SMPC::WriteINTBACKPeripheralReport() {
     m_intbackReportOffset += reportLength;
     if (m_intbackReportOffset == m_intbackReport.size()) {
         m_intbackInProgress = false;
+        m_intbackReportOffset = 0;
     }
 
     SR.bit7 = 1;                  // fixed 1
     SR.PDL = firstReport;         // 1=first data, 0=second+ data
     SR.NPE = m_intbackInProgress; // 0=no remaining data, 1=more data
-    SR.RESB = 0;                  // reset button state (0=off, 1=on)
+    SR.RESB = m_resetState;       // reset button state (0=off, 1=on)
     SR.P1MDn = m_port1mode;       // port 1 mode \  0=15 byte, 1=255 byte
     SR.P2MDn = m_port2mode;       // port 2 mode /  2=unused,  3=0 byte
 }

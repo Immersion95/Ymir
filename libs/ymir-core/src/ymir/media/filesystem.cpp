@@ -191,6 +191,8 @@ uint32 Filesystem::GetFileCount() const {
     return m_directories[m_currDirectory].GetContents().size() - 2;
 }
 
+static const FileInfo kEmptyFileInfo = {};
+
 const FileInfo &Filesystem::GetFileInfoWithOffset(uint8 fileID) const {
     if (!IsValid()) {
         // No file system loaded

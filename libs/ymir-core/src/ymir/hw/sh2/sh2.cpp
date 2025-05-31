@@ -261,8 +261,15 @@ void SH2::Reset(bool hard, bool watchdogInitiated) {
 
 void SH2::MapMemory(sys::Bus &bus) {
     const uint32 addressOffset = !BCR1.MASTER * 0x80'0000;
-    bus.MapNormal(0x100'0000 + addressOffset, 0x17F'FFFF + addressOffset, this,
-                  [](uint32 address, uint16, void *ctx) { static_cast<SH2 *>(ctx)->TriggerFRTInputCapture(); });
+    bus.MapNormal(
+        0x100'0000 + addressOffset, 0x17F'FFFF + addressOffset, this,
+        [](uint32 address, uint8, void *ctx) {
+            if (address & 1) {
+                static_cast<SH2 *>(ctx)->TriggerFRTInputCapture();
+            }
+        },
+        [](uint32 address, uint16, void *ctx) { static_cast<SH2 *>(ctx)->TriggerFRTInputCapture(); },
+        [](uint32 address, uint32, void *ctx) { static_cast<SH2 *>(ctx)->TriggerFRTInputCapture(); });
 }
 
 void SH2::DumpCacheData(std::ostream &out) const {
@@ -870,7 +877,7 @@ FORCE_INLINE uint32 SH2::OnChipRegReadLong(uint32 address) {
     case 0x128: return DIVU.DVCR.Read();
 
     case 0x10C:
-    case 0x12C: return INTC.GetVector(InterruptSource::DIVU_OVFI);
+    case 0x12C: return DIVU.VCRDIV;
 
     case 0x110:
     case 0x130: return DIVU.DVDNTH;
@@ -975,13 +982,15 @@ FORCE_INLINE void SH2::OnChipRegWriteByte(uint32 address, uint8 value) {
     switch (address) {
     case 0x10:
         FRT.WriteTIER(value);
-        if (INTC.pending.source == InterruptSource::FRT_OVI || INTC.pending.source == InterruptSource::FRT_OCI) {
+        if (INTC.pending.source == InterruptSource::FRT_OVI || INTC.pending.source == InterruptSource::FRT_OCI ||
+            INTC.pending.source == InterruptSource::FRT_ICI) {
             RecalcInterrupts();
         }
         break;
     case 0x11:
         FRT.WriteFTCSR<poke>(value);
-        if (INTC.pending.source == InterruptSource::FRT_OVI || INTC.pending.source == InterruptSource::FRT_OCI) {
+        if (INTC.pending.source == InterruptSource::FRT_OVI || INTC.pending.source == InterruptSource::FRT_OCI ||
+            INTC.pending.source == InterruptSource::FRT_ICI) {
             RecalcInterrupts();
         }
         break;
@@ -1170,7 +1179,10 @@ FORCE_INLINE void SH2::OnChipRegWriteLong(uint32 address, uint32 value) {
     case 0x128: DIVU.DVCR.Write(value); break;
 
     case 0x10C:
-    case 0x12C: INTC.SetVector(InterruptSource::DIVU_OVFI, bit::extract<0, 6>(value)); break;
+    case 0x12C:
+        INTC.SetVector(InterruptSource::DIVU_OVFI, bit::extract<0, 6>(value));
+        DIVU.VCRDIV = value;
+        break;
 
     case 0x110:
     case 0x130: DIVU.DVDNTH = value; break;
@@ -1434,10 +1446,9 @@ FORCE_INLINE void SH2::TriggerFRTInputCapture() {
 FORCE_INLINE void SH2::SetExternalInterrupt(uint8 level, uint8 vector) {
     assert(level < 16);
 
-    const InterruptSource source = InterruptSource::IRL;
+    static constexpr InterruptSource source = InterruptSource::IRL;
 
     INTC.externalVector = vector;
-
     INTC.SetLevel(source, level);
 
     if (level > 0) {
@@ -1647,9 +1658,9 @@ FORCE_INLINE uint64 SH2::InterpretNext() {
     case OpcodeType::MOVW_SG: MOVWSG<debug, enableCache>(args), PC += 2; return 1;
     case OpcodeType::MOVL_SG: MOVLSG<debug, enableCache>(args), PC += 2; return 1;
     case OpcodeType::MOV_I: MOVI(args), PC += 2; return 1;
-    case OpcodeType::MOVW_I: MOVWI<debug, enableCache>(args), PC += 2; return 1;
-    case OpcodeType::MOVL_I: MOVLI<debug, enableCache>(args), PC += 2; return 1;
-    case OpcodeType::MOVA: MOVA(args), PC += 2; return 1;
+    case OpcodeType::MOVW_I: MOVWI<debug, enableCache, false>(args), PC += 2; return 1;
+    case OpcodeType::MOVL_I: MOVLI<debug, enableCache, false>(args), PC += 2; return 1;
+    case OpcodeType::MOVA: MOVA<false>(args), PC += 2; return 1;
     case OpcodeType::MOVT: MOVT(args), PC += 2; return 1;
     case OpcodeType::CLRT: CLRT(), PC += 2; return 1;
     case OpcodeType::SETT: SETT(), PC += 2; return 1;
@@ -1803,9 +1814,9 @@ FORCE_INLINE uint64 SH2::InterpretNext() {
     case OpcodeType::Delay_MOVW_SG: MOVWSG<debug, enableCache>(args), jumpToDelaySlot(); return 1;
     case OpcodeType::Delay_MOVL_SG: MOVLSG<debug, enableCache>(args), jumpToDelaySlot(); return 1;
     case OpcodeType::Delay_MOV_I: MOVI(args), jumpToDelaySlot(); return 1;
-    case OpcodeType::Delay_MOVW_I: MOVWI<debug, enableCache>(args), jumpToDelaySlot(); return 1;
-    case OpcodeType::Delay_MOVL_I: MOVLI<debug, enableCache>(args), jumpToDelaySlot(); return 1;
-    case OpcodeType::Delay_MOVA: MOVA(args), jumpToDelaySlot(); return 1;
+    case OpcodeType::Delay_MOVW_I: MOVWI<debug, enableCache, true>(args), jumpToDelaySlot(); return 1;
+    case OpcodeType::Delay_MOVL_I: MOVLI<debug, enableCache, true>(args), jumpToDelaySlot(); return 1;
+    case OpcodeType::Delay_MOVA: MOVA<true>(args), jumpToDelaySlot(); return 1;
     case OpcodeType::Delay_MOVT: MOVT(args), jumpToDelaySlot(); return 1;
     case OpcodeType::Delay_CLRT: CLRT(), jumpToDelaySlot(); return 1;
     case OpcodeType::Delay_SETT: SETT(), jumpToDelaySlot(); return 1;
@@ -2146,22 +2157,26 @@ FORCE_INLINE void SH2::MOVI(const DecodedArgs &args) {
 }
 
 // mov.w @(disp,PC), Rn
-template <bool debug, bool enableCache>
+template <bool debug, bool enableCache, bool delaySlot>
 FORCE_INLINE void SH2::MOVWI(const DecodedArgs &args) {
-    const uint32 address = PC + args.dispImm;
+    const uint32 pc = (delaySlot ? m_delaySlotTarget - 2u : PC);
+    const uint32 address = pc + args.dispImm;
     R[args.rn] = bit::sign_extend<16>(MemReadWord<enableCache>(address));
 }
 
 // mov.l @(disp,PC), Rn
-template <bool debug, bool enableCache>
+template <bool debug, bool enableCache, bool delaySlot>
 FORCE_INLINE void SH2::MOVLI(const DecodedArgs &args) {
-    const uint32 address = (PC & ~3u) + args.dispImm;
+    const uint32 pc = (delaySlot ? m_delaySlotTarget - 2u : PC);
+    const uint32 address = (pc & ~3u) + args.dispImm;
     R[args.rn] = MemReadLong<enableCache>(address);
 }
 
 // mova @(disp,PC), R0
+template <bool delaySlot>
 FORCE_INLINE void SH2::MOVA(const DecodedArgs &args) {
-    const uint32 address = (PC & ~3) + args.dispImm;
+    const uint32 pc = (delaySlot ? m_delaySlotTarget - 4u : PC);
+    const uint32 address = (pc & ~3u) + args.dispImm;
     R[0] = address;
 }
 

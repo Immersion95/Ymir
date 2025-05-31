@@ -8,6 +8,12 @@
 namespace ymir::state {
 
 // Version history:
+// v5:
+// - New fields
+//   - SCUState::pendingIntrLevel = 0
+//   - SCUState::pendingIntrIndex = 0
+// - Changed fields
+//   - SCUState::timer1Enable renamed to timerEnable; no changes to value
 // v4:
 // - New fields
 //   - enum SCUState::CartType: added ROM
@@ -89,13 +95,14 @@ struct SCUState {
     uint32 intrMask;
     uint32 intrStatus;
     bool abusIntrAck;
-    // bool intrPending;
+    uint8 pendingIntrLevel;
+    uint8 pendingIntrIndex;
 
     uint16 timer0Counter;
     uint16 timer0Compare;
     uint16 timer1Reload;
-    bool timer1Enable;
     bool timer1Mode;
+    bool timerEnable;
 
     bool wramSizeSelect;
 };

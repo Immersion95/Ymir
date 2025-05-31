@@ -61,6 +61,9 @@ struct RegDVCR {
 //   bits   r/w  code   description
 //   31-7   R    -      Reserved - must be zero
 //    6-0   R/W  -      Interrupt Vector Number
+//
+// Bits 15-0 are all writable.
+using RegVCRDIV = uint16;
 
 // 110  R/W  32       ud        DVDNTH  Dividend register H
 //
@@ -97,6 +100,7 @@ struct DivisionUnit {
         DVSR = 0x0;  // undefined initial value
         DVDNT = 0x0; // undefined initial value
         DVCR.Reset();
+        VCRDIV = 0x0;  // undefined initial value
         DVDNTH = 0x0;  // undefined initial value
         DVDNTL = 0x0;  // undefined initial value
         DVDNTUH = 0x0; // undefined initial value
@@ -106,7 +110,7 @@ struct DivisionUnit {
     RegDVSR DVSR;       // 100  R/W  32       ud        DVSR    Divisor register
     RegDVDNT DVDNT;     // 104  R/W  32       ud        DVDNT   Dividend register L for 32-bit division
     RegDVCR DVCR;       // 108  R/W  16,32    00000000  DVCR    Division control register
-                        // 10C  R/W  16,32    ud        VCRDIV  Vector number register setting DIV
+    RegVCRDIV VCRDIV;   // 10C  R/W  16,32    ud        VCRDIV  Vector number register setting DIV
     RegDVDNTH DVDNTH;   // 110  R/W  32       ud        DVDNTH  Dividend register H
     RegDVDNTL DVDNTL;   // 114  R/W  32       ud        DVDNTL  Dividend register L
     RegDVDNTUH DVDNTUH; // 118  R/W  32       ud        DVDNTUH Undocumented dividend register H
@@ -148,7 +152,7 @@ struct DivisionUnit {
             // The division unit uses 3 cycles to set up flags, leaving 3 cycles for calculations
             DVDNTH = dividend >> 29;
             if (DVCR.OVFIE) {
-                DVDNTL = DVDNT = (dividend << 3) | ((dividend >> 31) & 7);
+                DVDNTL = DVDNT = (dividend << 3) | ((~dividend >> 31) & 7);
             } else {
                 // DVDNT/DVDNTL is saturated if the interrupt signal is disabled
                 DVDNTL = DVDNT = dividend < 0 ? kMinValue : kMaxValue;
@@ -176,24 +180,28 @@ struct DivisionUnit {
 
         if (dividend == -0x80000000ll && divisor == -1) {
             DVDNTH = DVDNTUH = 0;
-            DVDNTL = DVDNTUL = -0x80000000l;
+            DVDNTL = DVDNTUL = 0x80000000;
             return;
         }
 
         if (!overflow) {
-            const sint64 quotient = dividend / divisor;
-            const sint32 remainder = dividend % divisor;
-
-            if (quotient <= kMinValue32 || quotient > kMaxValue32) [[unlikely]] {
-                // Overflow cases
-                overflow = true;
-            } else if (dividend == kMinValue64 && divisor == -1) [[unlikely]] {
-                // Handle extreme case
+            if (dividend == kMinValue64 && divisor == -1) [[unlikely]] {
                 overflow = true;
             } else {
-                // TODO: schedule event to run this after 39 cycles
-                DVDNTL = DVDNT = quotient;
-                DVDNTH = remainder;
+                const sint64 quotient = dividend / divisor;
+                const sint32 remainder = dividend % divisor;
+
+                if (quotient <= kMinValue32 || quotient > kMaxValue32) [[unlikely]] {
+                    // Overflow cases
+                    overflow = true;
+                } else if (dividend == kMinValue64 && divisor == -1) [[unlikely]] {
+                    // Handle extreme case
+                    overflow = true;
+                } else {
+                    // TODO: schedule event to run this after 39 cycles
+                    DVDNTL = DVDNT = quotient;
+                    DVDNTH = remainder;
+                }
             }
         }
 
@@ -240,6 +248,7 @@ struct DivisionUnit {
         state.DVSR = DVSR;
         state.DVDNT = DVDNT;
         state.DVCR = DVCR.Read();
+        state.VCRDIV = VCRDIV;
         state.DVDNTH = DVDNTH;
         state.DVDNTL = DVDNTL;
         state.DVDNTUH = DVDNTUH;
@@ -250,6 +259,7 @@ struct DivisionUnit {
         DVSR = state.DVSR;
         DVDNT = state.DVDNT;
         DVCR.Write(state.DVCR);
+        VCRDIV = state.VCRDIV;
         DVDNTH = state.DVDNTH;
         DVDNTL = state.DVDNTL;
         DVDNTUH = state.DVDNTUH;

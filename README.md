@@ -1,7 +1,7 @@
 # Ymir
 A work-in-progress Sega Saturn emulator.
 
-[![Release](https://github.com/StrikerX3/Ymir/actions/workflows/release.yaml/badge.svg)](https://github.com/StrikerX3/Ymir/actions/workflows/release.yaml)
+[![Release](https://github.com/StrikerX3/Ymir/actions/workflows/release.yaml/badge.svg)](https://github.com/StrikerX3/Ymir/actions/workflows/release.yaml) <a href="https://discord.gg/NN3A7n5dzn">![Discord Shield](https://discord.com/api/guilds/1368676375627694341/widget.png?style=shield)</a>
 
 <div class="grid" markdown>
   <img width="49%" src="https://github.com/StrikerX3/Ymir/blob/main/docs/images/cd-player.png"/>
@@ -19,9 +19,9 @@ A work-in-progress Sega Saturn emulator.
 - Load games from MAME CHD, BIN+CUE, IMG+CCD, MDF+MDS or ISO files
 - Automatic IPL (BIOS) ROM detection
 - Automatic region switching
-- Up to two players with standard Control Pads on both ports (more to come)
+- Up to two players with standard Control Pads or 3D Control Pads on both ports (more to come)
 - Fully customizable keybindings
-- Backup RAM and DRAM cartridges (more to come)
+- Backup RAM, DRAM and ROM cartridges (more to come)
 - Integrated backup memory manager to import and export saves, and transfer between internal and cartridge RAM
 - Save states
 - Rewinding (up to one minute at 60 fps), turbo speed, frame step (forwards and backwards)

@@ -36,10 +36,16 @@ void serialize(Archive &ar, SystemState &s) {
 }
 
 template <class Archive>
-void serialize(Archive &ar, SH2State &s) {
+void serialize(Archive &ar, SH2State &s, const uint32 version) {
     ar(s.R, s.PC, s.PR, s.MACL, s.MACH, s.SR, s.GBR, s.VBR);
     ar(s.delaySlot, s.delaySlotTarget);
-    ar(s.bsc, s.dmac, s.wdt, s.divu, s.frt, s.intc, s.cache, s.SBYCR);
+    ar(s.bsc, s.dmac, s.wdt);
+    serialize(ar, s.divu, version);
+    serialize(ar, s.frt, version);
+    ar(s.intc, s.cache, s.SBYCR);
+    if (version < 5) {
+        s.divu.VCRDIV = s.intc.vectors[12]; // 12 == static_cast<size_t>(sh2::InterruptSource::DIVU_OVFI)
+    }
 }
 
 template <class Archive>
@@ -63,13 +69,22 @@ void serialize(Archive &ar, SH2State::WDT &s) {
 }
 
 template <class Archive>
-void serialize(Archive &ar, SH2State::DIVU &s) {
+void serialize(Archive &ar, SH2State::DIVU &s, const uint32 version) {
     ar(s.DVSR, s.DVDNT, s.DVCR, s.DVDNTH, s.DVDNTL, s.DVDNTUH, s.DVDNTUL);
+    if (version >= 5) {
+        ar(s.VCRDIV);
+        // VCRDIV is filled in with INTC.vectors[DIVU_OVFI] for version prior to 5 in the SH2State serializer above
+    }
 }
 
 template <class Archive>
-void serialize(Archive &ar, SH2State::FRT &s) {
+void serialize(Archive &ar, SH2State::FRT &s, const uint32 version) {
     ar(s.TIER, s.FTCSR, s.FRC, s.OCRA, s.OCRB, s.TCR, s.TOCR, s.ICR, s.TEMP, s.cycleCount);
+    if (version >= 5) {
+        ar(s.FTCSR_mask);
+    } else {
+        s.FTCSR_mask = 0x00;
+    }
 }
 
 template <class Archive>
@@ -130,8 +145,14 @@ void serialize(Archive &ar, SCUState &s, const uint32 version) {
         ar(cereal::binary_data(s.cartData.data(), s.cartData.size()));
     }
     ar(s.intrMask, s.intrStatus, s.abusIntrAck);
+    if (version >= 5) {
+        ar(s.pendingIntrLevel, s.pendingIntrIndex);
+    } else {
+        s.pendingIntrLevel = 0;
+        s.pendingIntrIndex = 0;
+    }
     ar(s.timer0Counter, s.timer0Compare);
-    ar(s.timer1Reload, s.timer1Enable, s.timer1Mode);
+    ar(s.timer1Reload, s.timerEnable, s.timer1Mode);
     ar(s.wramSizeSelect);
 }
 
@@ -573,8 +594,8 @@ void serialize(Archive &ar, State &s, const uint32 version) {
     // NOTE: serialize is invoked manually here to handle versioned and non-versioned (pre-v4) variants
     serialize(ar, s.scheduler);
     serialize(ar, s.system);
-    serialize(ar, s.msh2);
-    serialize(ar, s.ssh2);
+    serialize(ar, s.msh2, version);
+    serialize(ar, s.ssh2, version);
     serialize(ar, s.scu, version);
     serialize(ar, s.smpc);
     serialize(ar, s.vdp, version);

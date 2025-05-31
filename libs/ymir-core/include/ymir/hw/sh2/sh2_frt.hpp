@@ -8,7 +8,7 @@
 namespace ymir::sh2 {
 
 struct FreeRunningTimer {
-    static constexpr uint64 kDividerShifts[] = {3, 5, 7, 0};
+    static constexpr uint64 kDividerShifts[] = {3, 5, 7, 64};
 
     enum class Event { None, OVI, OCI };
 
@@ -33,14 +33,27 @@ struct FreeRunningTimer {
     }
 
     FORCE_INLINE Event Advance(uint64 cycles) {
+        if (m_clockDividerShift >= 64) [[unlikely]] {
+            return Event::None;
+        }
+
         m_cycleCount += cycles;
         const uint64 steps = m_cycleCount >> m_clockDividerShift;
+        if (steps == 0) {
+            return Event::None;
+        }
         m_cycleCount &= m_cycleCountMask;
 
         Event event = Event::None;
 
         uint64 nextFRC = FRC + steps;
-        if (FRC < OCRA && nextFRC >= OCRA) {
+        if (nextFRC >= 0x10000) {
+            FTCSR.OVF = 1;
+            if (TIER.OVIE) {
+                event = Event::OVI;
+            }
+        }
+        if (FRC - 1 < OCRA && FRC + steps - 1 >= OCRA) {
             FTCSR.OCFA = 1;
             if (FTCSR.CCLRA) {
                 nextFRC = 0;
@@ -49,16 +62,10 @@ struct FreeRunningTimer {
                 event = Event::OCI;
             }
         }
-        if (FRC < OCRB && nextFRC >= OCRB) {
+        if (FRC - 1 < OCRB && FRC + steps - 1 >= OCRB) {
             FTCSR.OCFB = 1;
             if (TIER.OCIBE) {
                 event = Event::OCI;
-            }
-        }
-        if (nextFRC >= 0x10000) {
-            FTCSR.OVF = 1;
-            if (TIER.OVIE) {
-                event = Event::OVI;
             }
         }
         FRC = nextFRC;
@@ -90,20 +97,23 @@ struct FreeRunningTimer {
 
         void Reset() {
             ICIE = false;
+            unused = 0x00;
             OCIAE = false;
             OCIBE = false;
             OVIE = false;
         }
 
-        bool ICIE;  // 7   R/W  ICIE     Input Capture Interrupt Enable
-        bool OCIAE; // 3   R/W  OCIAE    Output Compare Interrupt A Enable
-        bool OCIBE; // 2   R/W  OCIBE    Output Compare Interrupt B Enable
-        bool OVIE;  // 1   R/W  OVIE     Timer Overflow Interrupt Enable
+        bool ICIE;    // 7   R/W  ICIE     Input Capture Interrupt Enable
+        uint8 unused; // 6-4 R/W  -        (unused but writable bits)
+        bool OCIAE;   // 3   R/W  OCIAE    Output Compare Interrupt A Enable
+        bool OCIBE;   // 2   R/W  OCIBE    Output Compare Interrupt B Enable
+        bool OVIE;    // 1   R/W  OVIE     Timer Overflow Interrupt Enable
     } TIER;
 
     FORCE_INLINE uint8 ReadTIER() const {
         uint8 value = 0;
         bit::deposit_into<7>(value, TIER.ICIE);
+        bit::deposit_into<4, 6>(value, bit::extract<4, 6>(TIER.unused));
         bit::deposit_into<3>(value, TIER.OCIAE);
         bit::deposit_into<2>(value, TIER.OCIBE);
         bit::deposit_into<1>(value, TIER.OVIE);
@@ -113,6 +123,7 @@ struct FreeRunningTimer {
 
     FORCE_INLINE void WriteTIER(uint8 value) {
         TIER.ICIE = bit::test<7>(value);
+        TIER.unused = bit::extract<4, 6>(value) << 4u;
         TIER.OCIAE = bit::test<3>(value);
         TIER.OCIBE = bit::test<2>(value);
         TIER.OVIE = bit::test<1>(value);
@@ -138,6 +149,7 @@ struct FreeRunningTimer {
             OCFB = false;
             OVF = false;
             CCLRA = false;
+            mask = 0x00;
         }
 
         bool ICF;   // 7   R/W  ICF      Input Capture Flag (clear on zero write)
@@ -145,6 +157,10 @@ struct FreeRunningTimer {
         bool OCFB;  // 2   R/W  OCFB     Output Compare Flag B (clear on zero write)
         bool OVF;   // 1   R/W  OVF      Timer Overflow Flag (clear on zero write)
         bool CCLRA; // 0   R/W  CCLRA    Counter Clear A
+
+        // Which bits have been read as true?
+        // Necessary to mask clears.
+        mutable uint8 mask;
     } FTCSR;
 
     FORCE_INLINE uint8 ReadFTCSR() const {
@@ -154,6 +170,7 @@ struct FreeRunningTimer {
         bit::deposit_into<2>(value, FTCSR.OCFB);
         bit::deposit_into<1>(value, FTCSR.OVF);
         bit::deposit_into<0>(value, FTCSR.CCLRA);
+        FTCSR.mask = value;
         return value;
     }
 
@@ -166,11 +183,12 @@ struct FreeRunningTimer {
             FTCSR.OVF = bit::test<1>(value);
             FTCSR.CCLRA = bit::test<0>(value);
         } else {
-            FTCSR.ICF &= bit::test<7>(value);
-            FTCSR.OCFA &= bit::test<3>(value);
-            FTCSR.OCFB &= bit::test<2>(value);
-            FTCSR.OVF &= bit::test<1>(value);
+            FTCSR.ICF &= bit::test<7>(value) | ~bit::test<7>(FTCSR.mask);
+            FTCSR.OCFA &= bit::test<3>(value) | ~bit::test<3>(FTCSR.mask);
+            FTCSR.OCFB &= bit::test<2>(value) | ~bit::test<2>(FTCSR.mask);
+            FTCSR.OVF &= bit::test<1>(value) | ~bit::test<1>(FTCSR.mask);
             FTCSR.CCLRA = bit::test<0>(value);
+            FTCSR.mask = 0x00;
         }
     }
 
@@ -261,6 +279,8 @@ struct FreeRunningTimer {
     //                          01 (1) = Internal clock / 32
     //                          10 (2) = Internal clock / 128
     //                          11 (3) = External clock (on rising edge)
+    //                                   (the FTCI pin is tied to +5V on the Saturn,
+    //                                    so this option effectively disables the timer)
     struct RegTCR {
         RegTCR() {
             Reset();
@@ -315,15 +335,17 @@ struct FreeRunningTimer {
             OLVLB = false;
         }
 
-        bool OCRS;  // 4   R/W  OCRS     Output Compare Register Select (0=OCRA, 1=OCRB)
-        bool OLVLA; // 1   R/W  OLVLA    Output Level A
-        bool OLVLB; // 0   R/W  OLVLB    Output Level B
+        bool OCRS;    // 4   R/W  OCRS     Output Compare Register Select (0=OCRA, 1=OCRB)
+        uint8 unused; // 3-2 R/W  -        (unused but writable)
+        bool OLVLA;   // 1   R/W  OLVLA    Output Level A
+        bool OLVLB;   // 0   R/W  OLVLB    Output Level B
     } TOCR;
 
     FORCE_INLINE uint8 ReadTOCR() const {
         uint8 value = 0;
         bit::deposit_into<5, 7>(value, 0b111);
         bit::deposit_into<4>(value, TOCR.OCRS);
+        bit::deposit_into<2, 3>(value, bit::extract<2, 3>(TOCR.unused));
         bit::deposit_into<1>(value, TOCR.OLVLA);
         bit::deposit_into<0>(value, TOCR.OLVLB);
         return value;
@@ -331,6 +353,7 @@ struct FreeRunningTimer {
 
     FORCE_INLINE void WriteTOCR(uint8 value) {
         TOCR.OCRS = bit::test<4>(value);
+        TOCR.unused = bit::extract<2, 3>(value) << 2u;
         TOCR.OLVLA = bit::test<1>(value);
         TOCR.OLVLB = bit::test<0>(value);
     }
@@ -386,6 +409,7 @@ struct FreeRunningTimer {
         state.ICR = ICR;
         state.TEMP = TEMP;
         state.cycleCount = m_cycleCount;
+        state.FTCSR_mask = FTCSR.mask;
     }
 
     void LoadState(const state::SH2State::FRT &state) {
@@ -399,6 +423,7 @@ struct FreeRunningTimer {
         ICR = state.ICR;
         TEMP = state.TEMP;
         m_cycleCount = state.cycleCount;
+        FTCSR.mask = state.FTCSR_mask;
     }
 
 private:

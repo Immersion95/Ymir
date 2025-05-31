@@ -45,7 +45,6 @@ struct FileInfo {
         return !IsDirectory();
     }
 };
-inline constexpr FileInfo kEmptyFileInfo = {};
 
 // Represents a file or directory in a path table directory.
 class FilesystemEntry {

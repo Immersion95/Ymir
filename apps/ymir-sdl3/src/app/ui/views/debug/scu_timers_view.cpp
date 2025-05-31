@@ -15,21 +15,19 @@ void SCUTimersView::Display() {
 
     bool t1mode = probe.GetTimer1Mode();
 
+    bool enable = probe.IsTimerEnabled();
+    if (ImGui::Checkbox("Enabled##timer", &enable)) {
+        probe.SetTimerEnabled(enable);
+    }
+
     if (ImGui::BeginTable("timer", 3, ImGuiTableFlags_SizingFixedFit)) {
         ImGui::TableNextRow();
-        ImGui::PushFont(m_context.fonts.sansSerif.medium.bold);
         if (ImGui::TableNextColumn()) {
+            ImGui::PushFont(m_context.fonts.sansSerif.medium.bold);
+            ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted("Timer 0");
+            ImGui::PopFont();
         }
-        if (ImGui::TableNextColumn()) {
-            ImGui::TextUnformatted("Timer 1");
-        }
-        if (ImGui::TableNextColumn()) {
-            ImGui::TextUnformatted("Timer 1 match");
-        }
-        ImGui::PopFont();
-
-        ImGui::TableNextRow();
         if (ImGui::TableNextColumn()) {
             uint16 counter = probe.GetTimer0Counter();
             ImGui::BeginGroup();
@@ -46,19 +44,6 @@ void SCUTimersView::Display() {
             ImGui::EndGroup();
         }
         if (ImGui::TableNextColumn()) {
-            bool enable = probe.IsTimer1Enabled();
-            if (ImGui::Checkbox("Enabled##timer1", &enable)) {
-                probe.SetTimer1Enabled(enable);
-            }
-        }
-        if (ImGui::TableNextColumn()) {
-            if (ImGui::RadioButton("Every line", !t1mode)) {
-                probe.SetTimer1Mode(false);
-            }
-        }
-
-        ImGui::TableNextRow();
-        if (ImGui::TableNextColumn()) {
             uint16 compare = probe.GetTimer0Compare();
             ImGui::BeginGroup();
             ImGui::SetNextItemWidth(ImGui::GetStyle().FramePadding.x * 2 + hexCharWidth * 3);
@@ -70,6 +55,14 @@ void SCUTimersView::Display() {
             ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted("Compare");
             ImGui::EndGroup();
+        }
+
+        ImGui::TableNextRow();
+        if (ImGui::TableNextColumn()) {
+            ImGui::PushFont(m_context.fonts.sansSerif.medium.bold);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted("Timer 1");
+            ImGui::PopFont();
         }
         if (ImGui::TableNextColumn()) {
             uint16 reload = probe.GetTimer1Reload();
@@ -85,6 +78,10 @@ void SCUTimersView::Display() {
             ImGui::EndGroup();
         }
         if (ImGui::TableNextColumn()) {
+            if (ImGui::RadioButton("Every line", !t1mode)) {
+                probe.SetTimer1Mode(false);
+            }
+            ImGui::SameLine();
             if (ImGui::RadioButton("Timer 0 match", t1mode)) {
                 probe.SetTimer1Mode(true);
             }
