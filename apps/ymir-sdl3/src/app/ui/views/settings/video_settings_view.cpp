@@ -63,6 +63,21 @@ void VideoSettingsView::Display() {
     // -----------------------------------------------------------------------------------------------------------------
 
     ImGui::PushFont(m_context.fonts.sansSerif.large.bold);
+    ImGui::SeparatorText("Enhancements");
+    ImGui::PopFont();
+
+    bool deinterlace = settings.deinterlace.Get();
+    if (MakeDirty(ImGui::Checkbox("Deinterlace video", &deinterlace))) {
+        settings.deinterlace = deinterlace;
+    }
+    widgets::ExplanationTooltip(
+        "When enabled, high-resolution modes will be rendered in progressive mode instead of interlaced.\n"
+        "Significantly impacts performance in those modes when enabled.",
+        m_context.displayScale);
+
+    // -----------------------------------------------------------------------------------------------------------------
+
+    ImGui::PushFont(m_context.fonts.sansSerif.large.bold);
     ImGui::SeparatorText("Performance");
     ImGui::PopFont();
 

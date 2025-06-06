@@ -7,6 +7,7 @@
 - App: Added option to to toggle fullscreen by double-clicking the display. (#197)
 - App: Added recent games list to File menu. (#196)
 - App: Added command-line option `-P` to force emulator to start paused.
+- VDP: Added option to deinterlace video. (#66)
 
 ### Fixes
 

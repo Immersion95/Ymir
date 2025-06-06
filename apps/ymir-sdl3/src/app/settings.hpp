@@ -268,6 +268,7 @@ public:
         bool displayVideoOutputInWindow;
         util::Observable<bool> fullScreen;
         bool doubleClickToFullScreen;
+        util::Observable<bool> deinterlace;
     } video;
 
     struct Audio {

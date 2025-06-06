@@ -62,6 +62,15 @@ public:
         m_cbVDP1FrameComplete = cbFrameComplete;
     }
 
+    // Enable or disable deinterlacing of double-density interlaced frames.
+    void SetDeinterlaceRender(bool enable) {
+        m_deinterlaceRender = enable;
+    }
+
+    bool IsDeinterlaceRender() const {
+        return m_deinterlaceRender;
+    }
+
     // TODO: replace with scheduler events
     template <bool debug>
     void Advance(uint64 cycles);
@@ -625,6 +634,22 @@ private:
 
     Color888 VDP2ReadRendererColor5to8(uint32 address);
 
+    // Enables deinterlacing of double-density interlace frames in the renderer.
+    // When false, double-density interlace mode is rendered normally - only even or odd lines are updated every frame.
+    // When true, double-density interlace modes is rendered in full resolution image every frame.
+    // - the standard even/odd frame is rendered into m_spriteFB
+    // - the complementary field is rendered into m_altSpriteFB
+    // - VDP2 renders two lines per line into the output framebuffer instead of just the even or odd lines
+    // - data written by the CPU on the VDP1 framebuffer is mirrored to the same position in m_altSpriteFB
+    bool m_deinterlaceRender = false;
+
+    // Complementary (alternate) VDP1 framebuffers, for deinterlaced rendering.
+    // When deinterlace mode is enabled, if the system is using double-density interlace, this buffer will contain the
+    // field lines complementary to the standard VDP1 framebuffer memory (e.g. while displaying odd lines, this buffer
+    // contains even lines).
+    // VDP2 rendering will combine both buffers to draw a full-resolution progressive image in one go.
+    alignas(16) std::array<std::array<uint8, kVDP1FramebufferRAMSize>, 2> m_altSpriteFB;
+
     // -------------------------------------------------------------------------
     // VDP1
 
@@ -945,6 +970,9 @@ private:
     // Retrieves the current set of VDP1 registers.
     VDP1Regs &VDP1GetRegs();
 
+    // Retrieves the current set of VDP1 registers.
+    const VDP1Regs &VDP1GetRegs() const;
+
     // Retrieves the current index of the VDP1 display framebuffer.
     uint8 VDP1GetDisplayFBIndex() const;
 
@@ -1030,6 +1058,9 @@ private:
     // Precalculates all window state for the scanline.
     //
     // y is the scanline to draw
+    //
+    // altField selects the complementary field when rendering deinterlaced double-interlace frames
+    template <bool altField>
     void VDP2CalcWindows(uint32 y);
 
     // Precalculates window state for a given set of parameters.
@@ -1081,7 +1112,8 @@ private:
     //
     // colorMode is the CRAM color mode.
     // rotate determines if Rotation Parameter A coordinates should be used to draw the sprite layer.
-    template <uint32 colorMode, bool rotate>
+    // altField selects the complementary field when rendering deinterlaced double-interlace frames
+    template <uint32 colorMode, bool rotate, bool altField>
     void VDP2DrawSpriteLayer(uint32 y);
 
     // Draws the current VDP2 scanline of the specified normal background layer.
@@ -1090,6 +1122,7 @@ private:
     // colorMode is the CRAM color mode.
     //
     // bgIndex specifies the normal background index, from 0 to 3.
+    // altField selects the complementary field when rendering deinterlaced double-interlace frames
     template <uint32 bgIndex>
     void VDP2DrawNormalBG(uint32 y, uint32 colorMode);
 
@@ -1099,12 +1132,16 @@ private:
     // colorMode is the CRAM color mode.
     //
     // bgIndex specifies the rotation background index, from 0 to 1.
+    // altField selects the complementary field when rendering deinterlaced double-interlace frames
     template <uint32 bgIndex>
     void VDP2DrawRotationBG(uint32 y, uint32 colorMode);
 
     // Composes the current VDP2 scanline out of the rendered lines.
     //
     // y is the scanline to draw
+    //
+    // altField selects the complementary field when rendering deinterlaced double-interlace frames
+    template <bool altField>
     void VDP2ComposeLine(uint32 y);
 
     // Draws a normal scroll BG scanline.
@@ -1254,18 +1291,27 @@ private:
     // Fetches sprite data based on the current sprite mode.
     //
     // fbOffset is the offset into the framebuffer (in bytes) where the sprite data is located.
+    //
+    // altField selects the complementary field when rendering deinterlaced double-interlace frames
+    template <bool altField>
     SpriteData VDP2FetchSpriteData(uint32 fbOffset);
 
     // Fetches 16-bit sprite data based on the current sprite mode.
     //
     // fbOffset is the offset into the framebuffer (in bytes) where the sprite data is located.
     // type is the sprite type (between 0 and 7).
+    //
+    // altField selects the complementary field when rendering deinterlaced double-interlace frames
+    template <bool altField>
     SpriteData VDP2FetchWordSpriteData(uint32 fbOffset, uint8 type);
 
     // Fetches 8-bit sprite data based on the current sprite mode.
     //
     // fbOffset is the offset into the framebuffer (in bytes) where the sprite data is located.
     // type is the sprite type (between 8 and 15).
+    //
+    // altField selects the complementary field when rendering deinterlaced double-interlace frames
+    template <bool altField>
     SpriteData VDP2FetchByteSpriteData(uint32 fbOffset, uint8 type);
 
     // Determines the type of sprite shadow (if any) based on color data.

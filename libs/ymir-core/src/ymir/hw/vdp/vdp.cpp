@@ -360,6 +360,10 @@ void VDP::DumpVDP2CRAM(std::ostream &out) const {
 void VDP::DumpVDP1Framebuffers(std::ostream &out) const {
     out.write((const char *)m_spriteFB[m_displayFB ^ 1].data(), m_spriteFB[m_displayFB ^ 1].size());
     out.write((const char *)m_spriteFB[m_displayFB].data(), m_spriteFB[m_displayFB].size());
+    if (m_deinterlaceRender) {
+        out.write((const char *)m_altSpriteFB[m_displayFB ^ 1].data(), m_altSpriteFB[m_displayFB ^ 1].size());
+        out.write((const char *)m_altSpriteFB[m_displayFB].data(), m_altSpriteFB[m_displayFB].size());
+    }
 }
 
 void VDP::SaveState(state::VDPState &state) const {
@@ -915,6 +919,9 @@ template <mem_primitive T>
 FORCE_INLINE void VDP::VDP1WriteFB(uint32 address, T value) {
     address &= 0x3FFFF;
     util::WriteBE<T>(&m_spriteFB[m_displayFB ^ 1][address], value);
+    if (m_deinterlaceRender) {
+        util::WriteBE<T>(&m_altSpriteFB[m_displayFB ^ 1][address & 0x3FFFF], value);
+    }
     // if (m_threadedVDPRendering) {
     //     m_VDPRenderContext.EnqueueEvent(VDPRenderEvent::VDP1FBWrite<T>(address, value));
     // }
@@ -1550,6 +1557,14 @@ FORCE_INLINE VDP1Regs &VDP::VDP1GetRegs() {
     }
 }
 
+FORCE_INLINE const VDP1Regs &VDP::VDP1GetRegs() const {
+    if (m_threadedVDPRendering) {
+        return m_VDPRenderContext.vdp1.regs;
+    } else {
+        return m_VDP1;
+    }
+}
+
 FORCE_INLINE uint8 VDP::VDP1GetDisplayFBIndex() const {
     if (m_threadedVDPRendering) {
         return m_VDPRenderContext.displayFB;
@@ -1566,7 +1581,11 @@ FORCE_INLINE void VDP::VDP1EraseFramebuffer() {
                                     regs1.eraseX1, regs1.eraseY1, regs1.eraseX3, regs1.eraseY3, regs1.eraseWriteValue,
                                     regs1.fbSizeH, regs1.fbSizeV, (regs1.pixel8Bits ? 8 : 16));
 
-    auto &fb = m_spriteFB[VDP1GetDisplayFBIndex()];
+    const uint8 fbIndex = VDP1GetDisplayFBIndex();
+    auto &fb = m_spriteFB[fbIndex];
+    auto &altFB = m_altSpriteFB[fbIndex];
+
+    const bool mirror = m_deinterlaceRender && regs2.TVMD.LSMDn == InterlaceMode::DoubleDensity;
 
     // Horizontal scale is doubled in hi-res modes or when targeting rotation background
     const uint32 scaleH = (regs2.TVMD.HRESOn & 0b010) || regs1.fbRotEnable ? 1 : 0;
@@ -1589,6 +1608,9 @@ FORCE_INLINE void VDP::VDP1EraseFramebuffer() {
         for (uint32 x = x1; x <= x3; x++) {
             const uint32 address = (fbOffset + x) << offsetShift;
             util::WriteBE<uint16>(&fb[address & 0x3FFFE], regs1.eraseWriteValue);
+            if (mirror) {
+                util::WriteBE<uint16>(&altFB[address & 0x3FFFE], regs1.eraseWriteValue);
+            }
         }
     }
 }
@@ -1736,30 +1758,42 @@ void VDP::VDP1ProcessCommand() {
 }
 
 FORCE_INLINE bool VDP::VDP1IsPixelUserClipped(CoordS32 coord) const {
+    const auto &regs1 = VDP1GetRegs();
+    const auto &regs2 = VDP2GetRegs();
+    const bool doubleV =
+        m_deinterlaceRender && regs2.TVMD.LSMDn == InterlaceMode::DoubleDensity && !regs1.dblInterlaceEnable;
     auto [x, y] = coord;
     const auto &ctx = m_VDP1RenderContext;
     if (x < ctx.userClipX0 || x > ctx.userClipX1) {
         return true;
     }
-    if (y < ctx.userClipY0 || y > ctx.userClipY1) {
+    if (y < (ctx.userClipY0 << doubleV) || y > (ctx.userClipY1 << doubleV)) {
         return true;
     }
     return false;
 }
 
 FORCE_INLINE bool VDP::VDP1IsPixelSystemClipped(CoordS32 coord) const {
+    const auto &regs1 = VDP1GetRegs();
+    const auto &regs2 = VDP2GetRegs();
+    const bool doubleV =
+        m_deinterlaceRender && regs2.TVMD.LSMDn == InterlaceMode::DoubleDensity && !regs1.dblInterlaceEnable;
     auto [x, y] = coord;
     const auto &ctx = m_VDP1RenderContext;
     if (x < 0 || x > ctx.sysClipH) {
         return true;
     }
-    if (y < 0 || y > ctx.sysClipV) {
+    if (y < 0 || y > (ctx.sysClipV << doubleV)) {
         return true;
     }
     return false;
 }
 
 FORCE_INLINE bool VDP::VDP1IsLineSystemClipped(CoordS32 coord1, CoordS32 coord2) const {
+    const auto &regs1 = VDP1GetRegs();
+    const auto &regs2 = VDP2GetRegs();
+    const bool doubleV =
+        m_deinterlaceRender && regs2.TVMD.LSMDn == InterlaceMode::DoubleDensity && !regs1.dblInterlaceEnable;
     auto [x1, y1] = coord1;
     auto [x2, y2] = coord2;
     const auto &ctx = m_VDP1RenderContext;
@@ -1772,13 +1806,17 @@ FORCE_INLINE bool VDP::VDP1IsLineSystemClipped(CoordS32 coord1, CoordS32 coord2)
     if (x1 > ctx.sysClipH && x2 > ctx.sysClipH) {
         return true;
     }
-    if (y1 > ctx.sysClipV && y2 > ctx.sysClipV) {
+    if (y1 > (ctx.sysClipV << doubleV) && y2 > (ctx.sysClipV << doubleV)) {
         return true;
     }
     return false;
 }
 
 bool VDP::VDP1IsQuadSystemClipped(CoordS32 coord1, CoordS32 coord2, CoordS32 coord3, CoordS32 coord4) const {
+    const auto &regs1 = VDP1GetRegs();
+    const auto &regs2 = VDP2GetRegs();
+    const bool doubleV =
+        m_deinterlaceRender && regs2.TVMD.LSMDn == InterlaceMode::DoubleDensity && !regs1.dblInterlaceEnable;
     auto [x1, y1] = coord1;
     auto [x2, y2] = coord2;
     auto [x3, y3] = coord3;
@@ -1793,7 +1831,8 @@ bool VDP::VDP1IsQuadSystemClipped(CoordS32 coord1, CoordS32 coord2, CoordS32 coo
     if (x1 > ctx.sysClipH && x2 > ctx.sysClipH && x3 > ctx.sysClipH && x4 > ctx.sysClipH) {
         return true;
     }
-    if (y1 > ctx.sysClipV && y2 > ctx.sysClipV && y3 > ctx.sysClipV && y4 > ctx.sysClipV) {
+    if (y1 > (ctx.sysClipV << doubleV) && y2 > (ctx.sysClipV << doubleV) && y3 > (ctx.sysClipV << doubleV) &&
+        y4 > (ctx.sysClipV << doubleV)) {
         return true;
     }
     return false;
@@ -1810,11 +1849,15 @@ FORCE_INLINE void VDP::VDP1PlotPixel(CoordS32 coord, const VDP1PixelParams &pixe
         return;
     }
 
-    if (regs1.dblInterlaceEnable && regs2.TVMD.LSMDn == InterlaceMode::DoubleDensity) {
-        if ((y & 1) == regs1.dblInterlaceDrawLine) {
+    const bool doubleDensity = regs2.TVMD.LSMDn == InterlaceMode::DoubleDensity;
+    const bool altFB = m_deinterlaceRender && doubleDensity && (y & 1);
+    if (doubleDensity) {
+        if (!m_deinterlaceRender && regs1.dblInterlaceEnable && (y & 1) == regs1.dblInterlaceDrawLine) {
             return;
         }
-        y >>= 1;
+        if (m_deinterlaceRender || regs1.dblInterlaceEnable) {
+            y >>= 1;
+        }
     }
 
     // Reject pixels outside of clipping area
@@ -1834,7 +1877,7 @@ FORCE_INLINE void VDP::VDP1PlotPixel(CoordS32 coord, const VDP1PixelParams &pixe
     // TODO: pixelParams.mode.preClippingDisable
 
     const uint32 fbOffset = y * regs1.fbSizeH + x;
-    auto &drawFB = m_spriteFB[VDP1GetDisplayFBIndex() ^ 1];
+    auto &drawFB = (altFB ? m_altSpriteFB : m_spriteFB)[VDP1GetDisplayFBIndex() ^ 1];
     if (regs1.pixel8Bits) {
         // TODO: what happens if pixelParams.mode.colorCalcBits/gouraudEnable != 0?
         if (pixelParams.mode.msbOn) {
@@ -2066,10 +2109,14 @@ void VDP::VDP1Cmd_DrawNormalSprite(uint32 cmdAddress, VDP1Command::Control contr
     const sint32 rx = xa + std::max(charSizeH, 1u) - 1u; // right X
     const sint32 by = ya + std::max(charSizeV, 1u) - 1u; // bottom Y
 
-    const CoordS32 coordA{lx, ty};
-    const CoordS32 coordB{rx, ty};
-    const CoordS32 coordC{rx, by};
-    const CoordS32 coordD{lx, by};
+    const auto &regs1 = VDP1GetRegs();
+    const auto &regs2 = VDP2GetRegs();
+    const bool doubleV =
+        m_deinterlaceRender && regs2.TVMD.LSMDn == InterlaceMode::DoubleDensity && !regs1.dblInterlaceEnable;
+    const CoordS32 coordA{lx, ty << doubleV};
+    const CoordS32 coordB{rx, ty << doubleV};
+    const CoordS32 coordC{rx, by << doubleV};
+    const CoordS32 coordD{lx, by << doubleV};
 
     devlog::trace<grp::vdp1_render>(
         "Draw normal sprite: {:3d}x{:<3d} {:3d}x{:<3d} {:3d}x{:<3d} {:3d}x{:<3d} color={:04X} "
@@ -2216,10 +2263,14 @@ void VDP::VDP1Cmd_DrawScaledSprite(uint32 cmdAddress, VDP1Command::Control contr
     qxd += ctx.localCoordX;
     qyd += ctx.localCoordY;
 
-    const CoordS32 coordA{qxa, qya};
-    const CoordS32 coordB{qxb, qyb};
-    const CoordS32 coordC{qxc, qyc};
-    const CoordS32 coordD{qxd, qyd};
+    const auto &regs1 = VDP1GetRegs();
+    const auto &regs2 = VDP2GetRegs();
+    const bool doubleV =
+        m_deinterlaceRender && regs2.TVMD.LSMDn == InterlaceMode::DoubleDensity && !regs1.dblInterlaceEnable;
+    const CoordS32 coordA{qxa, qya << doubleV};
+    const CoordS32 coordB{qxb, qyb << doubleV};
+    const CoordS32 coordC{qxc, qyc << doubleV};
+    const CoordS32 coordD{qxd, qyd << doubleV};
 
     devlog::trace<grp::vdp1_render>(
         "Draw scaled sprite: {:3d}x{:<3d} {:3d}x{:<3d} {:3d}x{:<3d} {:3d}x{:<3d} color={:04X} "
@@ -2284,10 +2335,14 @@ void VDP::VDP1Cmd_DrawDistortedSprite(uint32 cmdAddress, VDP1Command::Control co
     const uint32 charSizeH = size.H * 8;
     const uint32 charSizeV = size.V;
 
-    const CoordS32 coordA{xa, ya};
-    const CoordS32 coordB{xb, yb};
-    const CoordS32 coordC{xc, yc};
-    const CoordS32 coordD{xd, yd};
+    const auto &regs1 = VDP1GetRegs();
+    const auto &regs2 = VDP2GetRegs();
+    const bool doubleV =
+        m_deinterlaceRender && regs2.TVMD.LSMDn == InterlaceMode::DoubleDensity && !regs1.dblInterlaceEnable;
+    const CoordS32 coordA{xa, ya << doubleV};
+    const CoordS32 coordB{xb, yb << doubleV};
+    const CoordS32 coordC{xc, yc << doubleV};
+    const CoordS32 coordD{xd, yd << doubleV};
 
     devlog::trace<grp::vdp1_render>(
         "Draw distorted sprite: {:3d}x{:<3d} {:3d}x{:<3d} {:3d}x{:<3d} {:3d}x{:<3d} color={:04X} "
@@ -2348,10 +2403,14 @@ void VDP::VDP1Cmd_DrawPolygon(uint32 cmdAddress) {
     const sint32 yd = bit::sign_extend<13>(VDP1ReadRendererVRAM<uint16>(cmdAddress + 0x1A)) + ctx.localCoordY;
     const uint32 gouraudTable = static_cast<uint32>(VDP1ReadRendererVRAM<uint16>(cmdAddress + 0x1C)) << 3u;
 
-    const CoordS32 coordA{xa, ya};
-    const CoordS32 coordB{xb, yb};
-    const CoordS32 coordC{xc, yc};
-    const CoordS32 coordD{xd, yd};
+    const auto &regs1 = VDP1GetRegs();
+    const auto &regs2 = VDP2GetRegs();
+    const bool doubleV =
+        m_deinterlaceRender && regs2.TVMD.LSMDn == InterlaceMode::DoubleDensity && !regs1.dblInterlaceEnable;
+    const CoordS32 coordA{xa, ya << doubleV};
+    const CoordS32 coordB{xb, yb << doubleV};
+    const CoordS32 coordC{xc, yc << doubleV};
+    const CoordS32 coordD{xd, yd << doubleV};
 
     devlog::trace<grp::vdp1_render>(
         "Draw polygon: {}x{} - {}x{} - {}x{} - {}x{}, color {:04X}, gouraud table {}, CMDPMOD = {:04X}", xa, ya, xb, yb,
@@ -2400,10 +2459,14 @@ void VDP::VDP1Cmd_DrawPolylines(uint32 cmdAddress) {
     const sint32 yd = bit::sign_extend<13>(VDP1ReadRendererVRAM<uint16>(cmdAddress + 0x1A)) + ctx.localCoordY;
     const uint32 gouraudTable = static_cast<uint32>(VDP1ReadRendererVRAM<uint16>(cmdAddress + 0x1C)) << 3u;
 
-    const CoordS32 coordA{xa, ya};
-    const CoordS32 coordB{xb, yb};
-    const CoordS32 coordC{xc, yc};
-    const CoordS32 coordD{xd, yd};
+    const auto &regs1 = VDP1GetRegs();
+    const auto &regs2 = VDP2GetRegs();
+    const bool doubleV =
+        m_deinterlaceRender && regs2.TVMD.LSMDn == InterlaceMode::DoubleDensity && !regs1.dblInterlaceEnable;
+    const CoordS32 coordA{xa, ya << doubleV};
+    const CoordS32 coordB{xb, yb << doubleV};
+    const CoordS32 coordC{xc, yc << doubleV};
+    const CoordS32 coordD{xd, yd << doubleV};
 
     devlog::trace<grp::vdp1_render>(
         "Draw polylines: {}x{} - {}x{} - {}x{} - {}x{}, color {:04X}, gouraud table {}, CMDPMOD = {:04X}", xa, ya, xb,
@@ -2445,8 +2508,12 @@ void VDP::VDP1Cmd_DrawLine(uint32 cmdAddress) {
     const sint32 yb = bit::sign_extend<13>(VDP1ReadRendererVRAM<uint16>(cmdAddress + 0x12)) + ctx.localCoordY;
     const uint32 gouraudTable = static_cast<uint32>(VDP1ReadRendererVRAM<uint16>(cmdAddress + 0x1C)) << 3u;
 
-    const CoordS32 coordA{xa, ya};
-    const CoordS32 coordB{xb, yb};
+    const auto &regs1 = VDP1GetRegs();
+    const auto &regs2 = VDP2GetRegs();
+    const bool doubleV =
+        m_deinterlaceRender && regs2.TVMD.LSMDn == InterlaceMode::DoubleDensity && !regs1.dblInterlaceEnable;
+    const CoordS32 coordA{xa, ya << doubleV};
+    const CoordS32 coordB{xb, yb << doubleV};
 
     devlog::trace<grp::vdp1_render>("Draw line: {}x{} - {}x{}, color {:04X}, gouraud table {}, CMDPMOD = {:04X}", xa,
                                     ya, xb, yb, color, gouraudTable, mode.u16);
@@ -2545,7 +2612,7 @@ FORCE_INLINE void VDP::VDP2InitNormalBG() {
     NormBGLayerState &bgState = m_normBGLayerStates[index];
     bgState.fracScrollX = 0;
     bgState.fracScrollY = 0;
-    if (m_VDP2.TVMD.LSMDn == InterlaceMode::DoubleDensity && m_VDP2.TVSTAT.ODD) {
+    if (!m_deinterlaceRender && m_VDP2.TVMD.LSMDn == InterlaceMode::DoubleDensity && m_VDP2.TVSTAT.ODD) {
         bgState.fracScrollY += bgParams.scrollIncV;
     }
 
@@ -2781,10 +2848,11 @@ FORCE_INLINE void VDP::VDP2CalcRotationParameterTables(uint32 y) {
     }
 }
 
+template <bool altField>
 FORCE_INLINE void VDP::VDP2CalcWindows(uint32 y) {
     const VDP2Regs &regs = VDP2GetRegs();
 
-    y = VDP2GetY(y);
+    y = VDP2GetY(y) ^ altField;
 
     // Calculate window for NBGs and RBGs
     for (int i = 0; i < 5; i++) {
@@ -3069,17 +3137,19 @@ void VDP::VDP2DrawLine(uint32 y) {
     using FnDrawLayer = void (VDP::*)(uint32 y);
 
     // Lookup table of sprite drawing functions
-    // Indexing: [colorMode][rotate]
+    // Indexing: [colorMode][rotate][altField]
     static constexpr auto fnDrawSprite = [] {
-        std::array<std::array<FnDrawLayer, 2>, 4> arr{};
+        std::array<std::array<std::array<FnDrawLayer, 2>, 2>, 4> arr{};
 
-        util::constexpr_for<2 * 4>([&](auto index) {
+        util::constexpr_for<2 * 2 * 4>([&](auto index) {
             const uint32 cmIndex = bit::extract<0, 1>(index());
             const uint32 rotIndex = bit::extract<2>(index());
+            const uint32 altFieldIndex = bit::extract<3>(index());
 
             const uint32 colorMode = cmIndex <= 2 ? cmIndex : 2;
             const bool rotate = rotIndex;
-            arr[cmIndex][rotate] = &VDP::VDP2DrawSpriteLayer<colorMode, rotate>;
+            const bool altField = altFieldIndex;
+            arr[cmIndex][rotate][altFieldIndex] = &VDP::VDP2DrawSpriteLayer<colorMode, rotate, altField>;
         });
 
         return arr;
@@ -3087,9 +3157,10 @@ void VDP::VDP2DrawLine(uint32 y) {
 
     const uint32 colorMode = regs2.vramControl.colorRAMMode;
     const bool rotate = regs1.fbRotEnable;
+    const bool deinterlace = m_deinterlaceRender && regs2.TVMD.LSMDn == InterlaceMode::DoubleDensity;
 
     // Precalculate window state
-    VDP2CalcWindows(y);
+    VDP2CalcWindows<false>(y);
 
     // Load rotation parameters if any of the RBG layers is enabled
     if (regs2.bgEnabled[4] || regs2.bgEnabled[5]) {
@@ -3100,7 +3171,7 @@ void VDP::VDP2DrawLine(uint32 y) {
     VDP2DrawLineColorAndBackScreens(y);
 
     // Draw sprite layer
-    (this->*fnDrawSprite[colorMode][rotate])(y);
+    (this->*fnDrawSprite[colorMode][rotate][false])(y);
 
     // Draw background layers
     if (regs2.bgEnabled[5]) {
@@ -3115,7 +3186,31 @@ void VDP::VDP2DrawLine(uint32 y) {
     }
 
     // Compose image
-    VDP2ComposeLine(y);
+    VDP2ComposeLine<false>(y);
+
+    // Draw complementary field if deinterlace is enabled while in double-density interlace mode
+    if (deinterlace) {
+        // Precalculate window state
+        VDP2CalcWindows<true>(y);
+
+        // Draw sprite layer
+        (this->*fnDrawSprite[colorMode][rotate][true])(y);
+
+        // Draw background layers
+        if (regs2.bgEnabled[5]) {
+            VDP2DrawRotationBG<0>(y, colorMode); // RBG0
+            VDP2DrawRotationBG<1>(y, colorMode); // RBG1
+        } else {
+            VDP2DrawRotationBG<0>(y, colorMode); // RBG0
+            VDP2DrawNormalBG<0>(y, colorMode);   // NBG0
+            VDP2DrawNormalBG<1>(y, colorMode);   // NBG1
+            VDP2DrawNormalBG<2>(y, colorMode);   // NBG2
+            VDP2DrawNormalBG<3>(y, colorMode);   // NBG3
+        }
+
+        // Compose image
+        VDP2ComposeLine<true>(y);
+    }
 }
 
 FORCE_INLINE void VDP::VDP2DrawLineColorAndBackScreens(uint32 y) {
@@ -3141,7 +3236,7 @@ FORCE_INLINE void VDP::VDP2DrawLineColorAndBackScreens(uint32 y) {
     }
 }
 
-template <uint32 colorMode, bool rotate>
+template <uint32 colorMode, bool rotate, bool altField>
 NO_INLINE void VDP::VDP2DrawSpriteLayer(uint32 y) {
     const VDP1Regs &regs1 = VDP1GetRegs();
     const VDP2Regs &regs2 = VDP2GetRegs();
@@ -3159,7 +3254,7 @@ NO_INLINE void VDP::VDP2DrawSpriteLayer(uint32 y) {
     for (uint32 x = 0; x < maxX; x++) {
         const uint32 xx = x << xShift;
 
-        const auto &spriteFB = m_spriteFB[VDP1GetDisplayFBIndex()];
+        const auto &spriteFB = altField ? m_altSpriteFB[VDP1GetDisplayFBIndex()] : m_spriteFB[VDP1GetDisplayFBIndex()];
         const uint32 spriteFBOffset = [&] {
             if constexpr (rotate) {
                 const auto &rotParamState = m_rotParamStates[0];
@@ -3216,7 +3311,7 @@ NO_INLINE void VDP::VDP2DrawSpriteLayer(uint32 y) {
         }
 
         // Palette data
-        const SpriteData spriteData = VDP2FetchSpriteData(spriteFBOffset);
+        const SpriteData spriteData = VDP2FetchSpriteData<altField>(spriteFBOffset);
         const uint32 colorIndex = params.colorDataOffset + spriteData.colorData;
         layerState.pixels.color[xx] = VDP2FetchCRAMColor<colorMode>(0, colorIndex);
         layerState.pixels.transparent[xx] = spriteData.colorData == 0;
@@ -4196,11 +4291,12 @@ FORCE_INLINE void Color888CompositeRatioMasked(const std::span<Color888> dest, c
     }
 }
 
+template <bool altField>
 FORCE_INLINE void VDP::VDP2ComposeLine(uint32 y) {
     const VDP2Regs &regs = VDP2GetRegs();
     const auto &colorCalcParams = regs.colorCalcParams;
 
-    y = VDP2GetY(y);
+    y = VDP2GetY(y) ^ altField;
 
     if (!regs.TVMD.DISP) {
         std::fill_n(&m_framebuffer[y * m_HRes], m_HRes, 0xFF000000);
@@ -4482,7 +4578,7 @@ NO_INLINE void VDP::VDP2DrawNormalScrollBG(uint32 y, const BGParams &bgParams, L
     uint32 fracScrollX = bgState.fracScrollX + bgParams.scrollAmountH;
     const uint32 fracScrollY = bgState.fracScrollY + bgParams.scrollAmountV;
     bgState.fracScrollY += bgParams.scrollIncV;
-    if (regs.TVMD.LSMDn == InterlaceMode::DoubleDensity) {
+    if (!m_deinterlaceRender && regs.TVMD.LSMDn == InterlaceMode::DoubleDensity) {
         bgState.fracScrollY += bgParams.scrollIncV;
     }
 
@@ -4557,7 +4653,7 @@ NO_INLINE void VDP::VDP2DrawNormalBitmapBG(uint32 y, const BGParams &bgParams, L
     uint32 fracScrollX = bgState.fracScrollX + bgParams.scrollAmountH;
     const uint32 fracScrollY = bgState.fracScrollY + bgParams.scrollAmountV;
     bgState.fracScrollY += bgParams.scrollIncV;
-    if (regs.TVMD.LSMDn == InterlaceMode::DoubleDensity) {
+    if (!m_deinterlaceRender && regs.TVMD.LSMDn == InterlaceMode::DoubleDensity) {
         bgState.fracScrollY += bgParams.scrollIncV;
     }
 
@@ -5344,29 +5440,33 @@ FORCE_INLINE Color888 VDP::VDP2FetchCRAMColor(uint32 cramOffset, uint32 colorInd
     }
 }
 
+template <bool altField>
 FLATTEN FORCE_INLINE SpriteData VDP::VDP2FetchSpriteData(uint32 fbOffset) {
     const VDP1Regs &regs1 = VDP1GetRegs();
     const VDP2Regs &regs2 = VDP2GetRegs();
 
     const uint8 type = regs2.spriteParams.type;
     if (type < 8) {
-        return VDP2FetchWordSpriteData(fbOffset * sizeof(uint16), type);
+        return VDP2FetchWordSpriteData<altField>(fbOffset * sizeof(uint16), type);
     } else {
         // Adjust the offset if VDP1 used 16-bit data.
         // The majority of games actually set these two parameters properly, but there's *always* an exception...
         if (!regs1.pixel8Bits) {
             fbOffset = fbOffset * sizeof(uint16) + 1;
         }
-        return VDP2FetchByteSpriteData(fbOffset, type);
+        return VDP2FetchByteSpriteData<altField>(fbOffset, type);
     }
 }
 
+template <bool altField>
 FORCE_INLINE SpriteData VDP::VDP2FetchWordSpriteData(uint32 fbOffset, uint8 type) {
     assert(type < 8);
 
     const VDP2Regs &regs = VDP2GetRegs();
 
-    const uint16 rawData = util::ReadBE<uint16>(&m_spriteFB[VDP1GetDisplayFBIndex()][fbOffset & 0x3FFFE]);
+    const uint8 fbIndex = VDP1GetDisplayFBIndex();
+    auto &fb = altField ? m_altSpriteFB[fbIndex] : m_spriteFB[fbIndex];
+    const uint16 rawData = util::ReadBE<uint16>(&fb[fbOffset & 0x3FFFE]);
 
     SpriteData data{};
     switch (regs.spriteParams.type) {
@@ -5428,12 +5528,15 @@ FORCE_INLINE SpriteData VDP::VDP2FetchWordSpriteData(uint32 fbOffset, uint8 type
     return data;
 }
 
+template <bool altField>
 FORCE_INLINE SpriteData VDP::VDP2FetchByteSpriteData(uint32 fbOffset, uint8 type) {
     assert(type >= 8);
 
     const VDP2Regs &regs = VDP2GetRegs();
 
-    const uint8 rawData = m_spriteFB[VDP1GetDisplayFBIndex()][fbOffset & 0x3FFFF];
+    const uint8 fbIndex = VDP1GetDisplayFBIndex();
+    auto &fb = altField ? m_altSpriteFB[fbIndex] : m_spriteFB[fbIndex];
+    const uint8 rawData = fb[fbOffset & 0x3FFFF];
 
     SpriteData data{};
     switch (regs.spriteParams.type) {
@@ -5494,7 +5597,7 @@ FORCE_INLINE uint32 VDP::VDP2GetY(uint32 y) const {
     const VDP2Regs &regs = VDP2GetRegs();
 
     if (regs.TVMD.LSMDn == InterlaceMode::DoubleDensity) {
-        return (y << 1) | regs.TVSTAT.ODD;
+        return (y << 1) | (regs.TVSTAT.ODD & !m_deinterlaceRender);
     } else {
         return y;
     }

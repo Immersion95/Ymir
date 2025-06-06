@@ -552,6 +552,7 @@ void Settings::ResetToDefaults() {
     video.displayVideoOutputInWindow = false;
     video.fullScreen = false;
     video.doubleClickToFullScreen = false;
+    video.deinterlace = false;
 
     audio.volume = 0.8;
     audio.mute = false;
@@ -769,6 +770,7 @@ SettingsLoadResult Settings::Load(const std::filesystem::path &path) {
         Parse(tblVideo, "DisplayVideoOutputInWindow", video.displayVideoOutputInWindow);
         Parse(tblVideo, "FullScreen", video.fullScreen);
         Parse(tblVideo, "DoubleClickToFullScreen", video.doubleClickToFullScreen);
+        Parse(tblVideo, "Deinterlace", video.deinterlace);
 
         Parse(tblVideo, "ThreadedVDP", emuConfig.video.threadedVDP);
     }
@@ -1016,6 +1018,7 @@ SettingsSaveResult Settings::Save() {
             {"DisplayVideoOutputInWindow", video.displayVideoOutputInWindow},
             {"FullScreen", video.fullScreen.Get()},
             {"DoubleClickToFullScreen", video.doubleClickToFullScreen},
+            {"Deinterlace", video.deinterlace.Get()},
             {"ThreadedVDP", emuConfig.video.threadedVDP.Get()},
         }}},
 

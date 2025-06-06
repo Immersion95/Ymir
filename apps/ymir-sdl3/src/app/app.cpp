@@ -179,6 +179,9 @@ int App::Run(const CommandLineOptions &options) {
         inputSettings.gamepad.analogToDigitalSensitivity.Observe(inputContext.GamepadAnalogToDigitalSens);
     }
 
+    m_context.settings.video.deinterlace.Observe(
+        [&](bool value) { m_context.EnqueueEvent(events::emu::SetDeinterlace(value)); });
+
     {
         auto result = m_context.settings.Load(m_context.profile.GetPath(ProfilePath::Root) / "Ymir.toml");
         if (!result) {

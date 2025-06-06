@@ -48,6 +48,10 @@ EmuEvent SetAreaCode(uint8 areaCode) {
     return RunFunction([=](SharedContext &ctx) { ctx.saturn.SMPC.SetAreaCode(areaCode); });
 }
 
+EmuEvent SetDeinterlace(bool enable) {
+    return RunFunction([=](SharedContext &ctx) { ctx.saturn.VDP.SetDeinterlaceRender(enable); });
+}
+
 EmuEvent SetDebugTrace(bool enable) {
     return RunFunction([=](SharedContext &ctx) {
         ctx.saturn.EnableDebugTracing(enable);

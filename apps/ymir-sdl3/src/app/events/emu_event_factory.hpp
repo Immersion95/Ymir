@@ -82,6 +82,8 @@ EmuEvent SetClockSpeed(ymir::sys::ClockSpeed clockSpeed);
 EmuEvent SetVideoStandard(ymir::core::config::sys::VideoStandard videoStandard);
 EmuEvent SetAreaCode(uint8 areaCode);
 
+EmuEvent SetDeinterlace(bool enable);
+
 EmuEvent SetDebugTrace(bool enable);
 EmuEvent DumpMemory();
 
